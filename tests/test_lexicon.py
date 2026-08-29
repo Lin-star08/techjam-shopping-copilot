@@ -25,7 +25,10 @@ class LexiconTest(unittest.TestCase):
         self.assertEqual(len(questions), 3)
         self.assertTrue(all(item["ask_attribute"] in ALLOWED_ASK_ATTRIBUTES for item in questions))
         self.assertIn("black", payload["vocabulary"]["color"]["values"])
-        self.assertIn("public ground truth", render_playbook(payload))
+        playbook = render_playbook(payload)
+        self.assertIn("public ground truth", playbook)
+        self.assertIn("`artifacts/lexicon.json`", playbook)
+        self.assertNotIn("`knowledge/lexicon.json`", playbook)
 
 
 if __name__ == "__main__":

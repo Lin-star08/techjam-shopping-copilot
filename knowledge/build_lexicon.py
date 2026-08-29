@@ -241,7 +241,7 @@ def render_playbook(payload: dict) -> str:
         "",
         "This file is generated from `data/catalog.jsonl` by `knowledge/build_lexicon.py`.",
         "It does not use public ground truth. The machine-readable source of truth is",
-        "`knowledge/lexicon.json`.",
+        "`artifacts/lexicon.json`.",
         "",
         "## Usage contract for member 2",
         "",
@@ -277,8 +277,8 @@ def render_playbook(payload: dict) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--catalog", type=Path, default=Path("data/catalog.jsonl"))
-    parser.add_argument("--output", type=Path, default=Path("knowledge/lexicon.json"))
-    parser.add_argument("--playbook-output", type=Path, default=Path("knowledge/category_playbook.md"))
+    parser.add_argument("--output", type=Path, default=Path("artifacts/lexicon.json"))
+    parser.add_argument("--playbook-output", type=Path, default=Path("artifacts/category_playbook.md"))
     parser.add_argument("--top-categories", type=int, default=30)
     args = parser.parse_args()
     payload = build(args.catalog, args.top_categories)
