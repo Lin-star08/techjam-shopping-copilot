@@ -9,6 +9,12 @@ from knowledge.build_lexicon import ALLOWED_ASK_ATTRIBUTES, build, render_playbo
 
 
 class LexiconTest(unittest.TestCase):
+    def test_delivery_artifact_is_loadable(self) -> None:
+        artifact = Path("artifacts/lexicon.json")
+        payload = json.loads(artifact.read_text(encoding="utf-8"))
+        self.assertEqual(payload["source"]["product_count"], 50_000)
+        self.assertFalse(payload["source"]["public_ground_truth_used"])
+
     def test_build_uses_catalog_and_returns_loadable_contract(self) -> None:
         rows = [
             {"parent_asin": "A", "title": "Black leather waterproof walking boots", "features": [], "description": [], "price": 49, "categories": ["Root", "Boots"], "details": {}, "store": "Acme"},

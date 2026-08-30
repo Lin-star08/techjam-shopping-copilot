@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "generated_on": "2026-08-29",
+  "generated_on": "2026-08-30",
   "source": {
     "path": "data/catalog.jsonl",
     "product_count": 50000,
@@ -1453,8 +1453,8 @@
             "running",
             "walking",
             "training",
-            "outdoor",
             "workout",
+            "outdoor",
             "work",
             "everyday",
             "summer"
@@ -1528,8 +1528,8 @@
             "gold",
             "white",
             "black",
-            "green",
             "blue",
+            "green",
             "yellow",
             "red"
           ]
@@ -1584,7 +1584,7 @@
             "rayon",
             "denim",
             "nylon",
-            "silk"
+            "satin"
           ]
         },
         {

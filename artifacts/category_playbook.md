@@ -2,7 +2,7 @@
 
 This file is generated from `data/catalog.jsonl` by `knowledge/build_lexicon.py`.
 It does not use public ground truth. The machine-readable source of truth is
-`knowledge/lexicon.json`.
+`artifacts/lexicon.json`.
 
 ## Usage contract for member 2
 
