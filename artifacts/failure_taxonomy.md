@@ -1,4 +1,4 @@
-# Failure Taxonomy v1.2
+# Failure Taxonomy v2
 
 This is the required Member 1 delivery artifact. It records only aggregate,
 evidence-backed v1.1 failures. It must not be used to encode public target
@@ -103,7 +103,7 @@ answers, target ASINs, or session-specific lookup rules.
 - Validation test: Add multi-turn tests in which the agent asks a real attribute, the user says no preference, state records it as neutral, and the next question changes.
 - Status: accepted
 
-## v1.2 ownership handoff
+## v2 ownership handoff
 
 | Finding | Member 1 support | Primary implementation owner |
 | --- | --- | --- |
