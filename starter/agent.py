@@ -1,23 +1,78 @@
 from __future__ import annotations
 
+import json
+import re
+import sqlite3
 from pathlib import Path
 
-from starter.constraints import apply_hard_filters, extract_basic_hard_constraints, parse_constraints
-from starter.retrieval import CatalogRetriever, ensure_valid_recommendations, is_generic_message, merge_candidates
-from starter.state import SessionState
+
+TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
+STOPWORDS = {
+    "a", "an", "and", "are", "as", "at", "be", "but", "by", "for", "from",
+    "i", "in", "is", "it", "me", "my", "of", "on", "or", "please", "some",
+    "that", "the", "this", "to", "want", "with", "would", "you", "looking",
+}
+
+
+def _text(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, dict):
+        return " ".join(f"{key} {item}" for key, item in value.items())
+    if isinstance(value, list):
+        return " ".join(str(item) for item in value)
+    return str(value)
+
+
+def _terms(text: str) -> list[str]:
+    return [
+        token.lower()
+        for token in TOKEN_RE.findall(text)
+        if len(token) > 1 and token.lower() not in STOPWORDS
+    ]
 
 
 class Agent:
-    """Day 1 retrieval-oriented agent with safe fallbacks and no LLM dependency."""
+    """Editable weak baseline: stateless BM25 retrieval with no LLM dependency."""
 
     def __init__(self, catalog_path: str | Path = "data/catalog.jsonl") -> None:
-        self.retriever = CatalogRetriever(catalog_path)
-        self._sessions: dict[str, SessionState] = {}
-        self._profiles: dict[str, dict] = {}
+        self.catalog_path = Path(catalog_path)
+        self.connection = sqlite3.connect(":memory:")
+        self._sessions: set[str] = set()
+        self._build_index()
+
+    def _build_index(self) -> None:
+        cursor = self.connection.cursor()
+        cursor.execute(
+            "CREATE VIRTUAL TABLE products USING fts5("
+            "parent_asin UNINDEXED, title, categories, features, details, store, description, "
+            "tokenize='unicode61 remove_diacritics 2')"
+        )
+        batch: list[tuple[str, str, str, str, str, str, str]] = []
+        with self.catalog_path.open(encoding="utf-8") as handle:
+            for line in handle:
+                product = json.loads(line)
+                batch.append(
+                    (
+                        str(product["parent_asin"]),
+                        _text(product.get("title")),
+                        _text(product.get("categories")),
+                        _text(product.get("features")),
+                        _text(product.get("details")),
+                        _text(product.get("store")),
+                        _text(product.get("description")),
+                    )
+                )
+                if len(batch) >= 1000:
+                    cursor.executemany("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?)", batch)
+                    batch.clear()
+        if batch:
+            cursor.executemany("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?)", batch)
+        self.connection.commit()
 
     def reset(self, session_id: str, user_profile: dict) -> None:
-        self._sessions[session_id] = SessionState.create(session_id, user_profile)
-        self._profiles[session_id] = user_profile
+        # The profile is anonymized and may be used for personalization.
+        self._sessions.add(session_id)
 
     def respond(
         self,
@@ -26,54 +81,19 @@ class Agent:
         turn: int,
         top_k: int,
     ) -> dict:
-        session_state = self._sessions.get(session_id)
-        if session_state is None:
+        if session_id not in self._sessions:
             raise RuntimeError("reset must be called before respond")
-
-        constraints = parse_constraints(
-            user_message,
-            last_asked_attribute=session_state.last_asked_attribute,
-        )
-        session_state.apply(constraints, turn)
-        user_profile = self._profiles.get(session_id, {})
-        hard_constraints = session_state.hard_constraints or extract_basic_hard_constraints(user_message)
-        fallback = self.retriever.fallback_candidates(user_message, limit=max(50, top_k))
-        generic_message = is_generic_message(user_message)
-        if generic_message:
-            route_lists = [
-                self.retriever.retrieve_category(session_state, user_message, limit=50),
-                self.retriever.retrieve_current_message(user_message, limit=50),
-                self.retriever.retrieve_current_state(session_state, limit=50),
-                self.retriever.retrieve_attribute_profile(session_state, user_profile, limit=50),
-            ]
-            route_lists.extend([
-                self.retriever.retrieve_browsing_profile(session_state, user_profile, user_message, limit=25),
-                self.retriever.retrieve_popular_category(limit=25),
-            ])
+        unique_terms = list(dict.fromkeys(_terms(user_message)))[:40]
+        expression = " OR ".join(f'"{term}"' for term in unique_terms)
+        if not expression:
+            recommendations: list[dict] = []
         else:
-            route_lists = [
-                self.retriever.retrieve_current_message(user_message, limit=50),
-                self.retriever.retrieve_current_state(session_state, limit=50),
-                self.retriever.retrieve_category(session_state, user_message, limit=50),
-                self.retriever.retrieve_attribute_profile(session_state, user_profile, limit=50),
-            ]
-        route_lists.append(fallback)
-        candidates = merge_candidates(
-            route_lists,
-            limit=100,
-        )
-        filtered = apply_hard_filters(
-            candidates,
-            hard_constraints,
-            self.retriever.product_lookup,
-            min_results=top_k,
-        )
-        recommendations = ensure_valid_recommendations(
-            filtered,
-            self.retriever.catalog_ids,
-            fallback,
-            top_k=top_k,
-        )
+            rows = self.connection.execute(
+                "SELECT parent_asin FROM products WHERE products MATCH ? "
+                "ORDER BY bm25(products, 0.0, 6.0, 4.0, 2.5, 2.5, 1.5, 1.0) LIMIT ?",
+                (expression, top_k),
+            ).fetchall()
+            recommendations = [{"parent_asin": str(row[0])} for row in rows]
         return {
             "message": "Here are the closest matches I found.",
             "ask_attribute": None,
