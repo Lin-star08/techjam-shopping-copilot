@@ -1,6 +1,6 @@
 # Category Question Playbook v1
 
-This file is generated from `data/catalog.jsonl` by `knowledge/build_lexicon.py`.
+This file is generated from `data/catalog.jsonl` by `artifacts/build_lexicon.py`.
 It does not use public ground truth. The machine-readable source of truth is
 `artifacts/lexicon.json`.
 

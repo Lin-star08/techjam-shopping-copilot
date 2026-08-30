@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from knowledge.build_lexicon import ALLOWED_ASK_ATTRIBUTES, build, render_playbook
+from artifacts.build_lexicon import ALLOWED_ASK_ATTRIBUTES, build, render_playbook
 
 
 class LexiconTest(unittest.TestCase):
