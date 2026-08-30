@@ -25,10 +25,12 @@ ALLOWED_ASK_ATTRIBUTES = {
 VOCABULARY = {
     "material": [
         "stainless steel", "sterling silver", "faux leather", "genuine leather",
+        "synthetic leather", "vegan leather", "pu leather", "faux suede",
         "memory foam", "polyester", "cotton", "spandex", "leather", "nylon",
         "wool", "silk", "satin", "denim", "canvas", "rubber", "suede",
         "fleece", "lace", "mesh", "acrylic", "rayon", "linen", "cashmere",
-        "gold", "silver", "titanium", "ceramic",
+        "polyurethane", "eva", "microfiber", "velvet", "chiffon", "modal",
+        "viscose", "gold", "silver", "titanium", "ceramic",
     ],
     "color": [
         "rose gold", "navy blue", "light blue", "dark blue", "hot pink",
@@ -38,40 +40,86 @@ VOCABULARY = {
     ],
     "style": [
         "high waist", "low rise", "slim fit", "regular fit", "relaxed fit",
-        "crew neck", "v neck", "long sleeve", "short sleeve", "sleeveless",
+        "high-waisted", "slim-fit", "loose fit", "crew neck", "crewneck",
+        "round neck", "v neck", "v-neck", "long sleeve", "short sleeve", "sleeveless",
         "casual", "formal", "classic", "vintage", "modern", "sporty",
         "minimalist", "boho", "western", "athletic", "dress", "oversized",
+        "bootcut", "cold shoulder", "cropped", "tunic", "hoodie", "camisole",
     ],
     "feature": [
         "waterproof", "water resistant", "breathable", "lightweight",
-        "quick drying", "quick dry", "moisture wicking", "uv protection",
-        "hypoallergenic", "non slip", "slip resistant", "stretch", "insulated",
+        "water repellent", "quick drying", "quick dry", "moisture wicking",
+        "sweat wicking", "uv protection", "hypoallergenic", "non slip",
+        "anti slip", "slip resistant", "stretch", "insulated", "windproof",
         "machine washable", "reversible", "adjustable", "padded", "supportive",
-        "comfortable", "durable", "compression", "wrinkle resistant",
+        "comfortable", "durable", "compression", "wrinkle resistant", "washable",
+        "odor resistant", "shock absorbing", "arch support", "cushioned",
+        "touchscreen", "pockets",
+    ],
+    "size": [
+        "plus size", "plus-size", "wide width", "extra wide", "petite",
+        "big and tall", "extended size", "one size",
     ],
     "use_case": [
         "running", "walking", "hiking", "training", "workout", "travel",
         "wedding", "party", "office", "work", "school", "outdoor", "winter",
         "summer", "swimming", "cycling", "dance", "costume", "everyday",
-        "gift", "sleep", "maternity",
+        "gift", "sleep", "maternity", "jogging", "gym", "fitness", "trekking",
+        "camping", "beach", "daily", "commute", "business", "yoga", "tennis",
+        "basketball", "soccer", "golf", "skiing",
     ],
 }
 
 ALIASES = {
     "color": {"grey": "gray", "navy blue": "navy"},
+    "material": {
+        "pu leather": "synthetic leather",
+        "vegan leather": "faux leather",
+    },
     "feature": {
         "quick drying": "quick dry",
         "moisture wicking": "moisture-wicking",
+        "sweat wicking": "moisture-wicking",
         "water resistant": "water-resistant",
+        "water repellent": "water-resistant",
         "non slip": "slip-resistant",
+        "anti slip": "slip-resistant",
         "slip resistant": "slip-resistant",
         "machine washable": "machine-washable",
         "uv protection": "UV protection",
+        "shock absorbing": "shock-absorbing",
+        "arch support": "arch-support",
     },
-    "style": {"v neck": "v-neck"},
+    "style": {
+        "v neck": "v-neck",
+        "crewneck": "crew-neck",
+        "crew neck": "crew-neck",
+        "high-waisted": "high-waist",
+        "high waist": "high-waist",
+        "slim-fit": "slim-fit",
+        "slim fit": "slim-fit",
+        "cold shoulder": "cold-shoulder",
+    },
+    "size": {
+        "plus size": "plus-size",
+        "wide width": "wide",
+        "extra wide": "extra-wide",
+        "big and tall": "big-and-tall",
+        "one size": "one-size",
+    },
+    "use_case": {
+        "jogging": "running",
+        "gym": "workout",
+        "fitness": "workout",
+        "trekking": "hiking",
+        "daily": "everyday",
+        "business": "office",
+    },
 }
 
 QUESTION_LABELS = {
+    "category": "What kind of item are you looking for?",
+    "size": "What size or fit do you need?",
     "material": "Do you have a material preference?",
     "color": "What color would you prefer?",
     "style": "What style or fit do you prefer?",
@@ -85,6 +133,8 @@ QUESTION_LABELS = {
 # question. These priors keep the catalog signal useful while preferring more
 # product-defining attributes for a vague shopper.
 QUESTION_WEIGHTS = {
+    "category": 1.0,
+    "size": 1.0,
     "material": 1.0,
     "color": 0.9,
     "style": 1.0,
@@ -92,6 +142,45 @@ QUESTION_WEIGHTS = {
     "budget": 0.8,
     "feature": 1.0,
     "use_case": 1.0,
+}
+
+
+# The first questions follow normal shopping conversations. Catalog coverage is
+# still exposed so member 2 can skip an attribute that cannot narrow the live
+# candidate set. The statistical score is a fallback, not the conversation order.
+QUESTION_ORDERS = {
+    "footwear": ("use_case", "size", "feature", "style", "material", "budget", "color", "brand"),
+    "apparel": ("use_case", "size", "style", "material", "feature", "budget", "color", "brand"),
+    "innerwear": ("size", "material", "feature", "use_case", "style", "budget", "color", "brand"),
+    "jewelry": ("use_case", "style", "material", "feature", "color", "budget", "brand", "size"),
+    "watch": ("use_case", "feature", "style", "material", "budget", "color", "brand", "size"),
+    "eyewear": ("use_case", "feature", "style", "color", "material", "budget", "brand", "size"),
+    "bag": ("use_case", "size", "feature", "style", "material", "budget", "color", "brand"),
+    "costume": ("use_case", "size", "style", "budget", "material", "feature", "color", "brand"),
+}
+
+QUESTION_EXPLANATIONS = {
+    "category": "Resolve an unreliable or overly broad product type before asking details.",
+    "use_case": "Establish the shopping goal first.",
+    "size": "Confirm fit or capacity before cosmetic preferences.",
+    "feature": "Capture the must-have function.",
+    "style": "Narrow the look or fit.",
+    "material": "Resolve comfort, care, or allergy needs.",
+    "budget": "Apply price only when catalog prices are usable.",
+    "color": "Use as a later preference unless explicitly requested.",
+    "brand": "Ask late because brand is rarely the best first discriminator.",
+}
+
+CATEGORY_FIRST_LEAVES = {"Westlake", "Clothing", "Casual", "Sets", "Women", "Men"}
+
+CATEGORY_QUALITY_NOTES = {
+    "Westlake": ("noisy_leaf", "The leaf does not describe a stable product type; infer from the full path and title."),
+    "Shoes": ("broad_leaf", "The leaf is valid but too broad; identify footwear purpose before details."),
+    "Clothing": ("broad_leaf", "The leaf is valid but too broad; identify garment type before details."),
+    "Casual": ("ambiguous_leaf", "The same leaf appears under dresses, pants, skirts, and shorts; retain its parent path."),
+    "Sets": ("ambiguous_leaf", "The same leaf appears under sleepwear, swimwear, activewear, and underwear; retain its parent path."),
+    "Women": ("broad_leaf", "Audience is not a product type; infer the requested item before attributes."),
+    "Men": ("broad_leaf", "Audience is not a product type; infer the requested item before attributes."),
 }
 
 
@@ -121,6 +210,23 @@ def _matches(text: str, pattern: re.Pattern[str], attribute: str) -> set[str]:
     }
 
 
+def _category_family(category: str) -> str:
+    lowered = category.lower()
+    keyword_groups = (
+        ("watch", ("watch",)),
+        ("eyewear", ("sunglass", "eyeglass")),
+        ("bag", ("bag", "wallet", "tote", "purse")),
+        ("costume", ("costume", "cosplay")),
+        ("innerwear", ("sock", "bra", "underwear", "lingerie", "sleep", "robe")),
+        ("jewelry", ("necklace", "earring", "dangle", "stud", "ring", "pendant", "hoop", "bracelet")),
+        ("footwear", ("shoe", "sneaker", "flat", "loafer", "slip-on", "pump", "sandal", "wedge", "slipper", "running", "walking", "boot", "oxford", "clog", "flip-flop", "slide")),
+    )
+    for family, keywords in keyword_groups:
+        if any(keyword in lowered for keyword in keywords):
+            return family
+    return "apparel"
+
+
 def _question_score(product_count: int, present_count: int, values: Counter[str]) -> float:
     """Information-value proxy: usable coverage times normalized value entropy."""
     if product_count == 0 or present_count == 0 or len(values) < 2:
@@ -143,6 +249,9 @@ def build(catalog_path: Path, top_categories: int) -> dict:
     category_values: dict[str, dict[str, Counter[str]]] = defaultdict(
         lambda: defaultdict(Counter)
     )
+    category_paths: dict[str, Counter[tuple[str, ...]]] = defaultdict(Counter)
+    missing_category_count = 0
+    leaf_equals_store: Counter[str] = Counter()
 
     with catalog_path.open(encoding="utf-8") as handle:
         for line_number, line in enumerate(handle, 1):
@@ -151,12 +260,17 @@ def build(catalog_path: Path, top_categories: int) -> dict:
             categories = [str(item).strip() for item in product.get("categories", []) if str(item).strip()]
             leaf = categories[-1] if categories else "Uncategorized"
             leaf_counts[leaf] += 1
+            category_paths[leaf][tuple(categories[:-1])] += 1
+            if not categories:
+                missing_category_count += 1
 
             store = str(product.get("store") or "").strip()
             if store:
                 stores[store] += 1
                 category_presence[leaf]["brand"] += 1
                 category_values[leaf]["brand"][store] += 1
+                if leaf.casefold() == store.casefold():
+                    leaf_equals_store[leaf] += 1
 
             price = product.get("price")
             if isinstance(price, (int, float)) and price >= 0:
@@ -194,13 +308,49 @@ def build(catalog_path: Path, top_categories: int) -> dict:
                 "top_values": [value for value, _ in category_values[category][attribute].most_common(8)],
             })
         candidates.sort(key=lambda item: (-item["information_value"], -item["coverage"], item["ask_attribute"]))
+        candidates_by_attribute = {item["ask_attribute"]: item for item in candidates}
+        family = _category_family(category)
+        question_order = []
+        ordered_attributes = QUESTION_ORDERS[family]
+        if category in CATEGORY_FIRST_LEAVES:
+            ordered_attributes = ("category",) + ordered_attributes
+        for attribute in ordered_attributes[:4]:
+            item = dict(candidates_by_attribute[attribute])
+            item["reason"] = QUESTION_EXPLANATIONS[attribute]
+            question_order.append(item)
         playbook[category] = {
             "product_count": count,
-            "high_value_questions": candidates[:3],
+            "category_family": family,
+            "question_order": question_order,
+            # Backward-compatible key for current consumers and tests.
+            "high_value_questions": question_order[:3],
+            "no_preference_fallback": "Skip this attribute and ask the next unasked attribute; after the listed order is exhausted, do not ask again.",
         }
 
+    quality_issues = []
+    for category, (issue_type, note) in CATEGORY_QUALITY_NOTES.items():
+        count = leaf_counts[category]
+        if count:
+            quality_issues.append({
+                "category": category,
+                "product_count": count,
+                "issue_type": issue_type,
+                "distinct_parent_paths": len(category_paths[category]),
+                "handling": note,
+            })
+    for category, count in leaf_equals_store.most_common():
+        quality_issues.append({
+            "category": category,
+            "product_count": count,
+            "issue_type": "brand_like_leaf",
+            "distinct_parent_paths": len(category_paths[category]),
+            "handling": "The leaf equals the store name; do not use it as a reliable product-type hard filter.",
+        })
+
     return {
-        "schema_version": "1.0",
+        "version": "v1.2",
+        "schema_version": "1.1",
+        "updated_at": date.today().isoformat(),
         "generated_on": date.today().isoformat(),
         "source": {
             "path": catalog_path.as_posix(),
@@ -223,6 +373,10 @@ def build(catalog_path: Path, top_categories: int) -> dict:
                 for name, count in leaf_counts.most_common(top_categories)
             ],
             "top_stores": [{"store": name, "product_count": count} for name, count in stores.most_common(50)],
+            "classification_audit": {
+                "missing_category_count": missing_category_count,
+                "quality_issues": quality_issues,
+            },
         },
         "vocabulary": {
             attribute: {
@@ -237,7 +391,7 @@ def build(catalog_path: Path, top_categories: int) -> dict:
 
 def render_playbook(payload: dict) -> str:
     lines = [
-        "# Category Question Playbook v1",
+        "# Category Question Playbook v1.2",
         "",
         "This file is generated from `data/catalog.jsonl` by `artifacts/build_lexicon.py`.",
         "It does not use public ground truth. The machine-readable source of truth is",
@@ -245,32 +399,57 @@ def render_playbook(payload: dict) -> str:
         "",
         "## Usage contract for member 2",
         "",
-        "1. Consider questions in the listed order, but skip attributes already in `asked`, `neutral`, or current slots.",
-        "2. Ask at most one attribute, and only if it is expected to narrow the current candidates; otherwise return `ask_attribute = null`.",
-        "3. Treat catalog-derived priorities as a weak policy prior, not as hard constraints.",
-        "4. A later explicit preference replaces the earlier value. Invalidated values must never re-enter current-state retrieval.",
-        "5. Some frozen catalog leaf labels are noisy (for example, `Westlake`). Do not hard-filter on a category inferred only from a noisy leaf label.",
+        "1. Follow the question order for the category family, but skip attributes already in `asked`, `neutral`, or current slots.",
+        "2. Ask at most one natural question per turn, only when the live candidates contain at least two meaningful values for that attribute.",
+        "3. If the user says no preference, record that attribute as neutral and move to the next unasked attribute. Never repeat it.",
+        "4. Stop asking and return `ask_attribute = null` after the listed order is exhausted or when no question can narrow candidates.",
+        "5. A later explicit preference replaces the earlier value. Invalidated values must never re-enter current-state retrieval.",
+        "6. Use the full category path. Do not hard-filter on a noisy, broad, ambiguous, or brand-like leaf label alone.",
         "",
         "## Catalog summary",
         "",
         f"- Products scanned: {payload['source']['product_count']}",
         f"- Products with usable prices: {payload['catalog_summary']['priced_product_count']} ({payload['catalog_summary']['priced_coverage']:.2%})",
-        "- Priority formula: attribute coverage x normalized value entropy x explainable policy prior.",
+        "- Coverage is catalog-derived and is a safety signal, not the conversation order.",
         "",
-        "## Top category priorities",
+        "## Classification audit",
         "",
+        f"- Products with no category path: {payload['catalog_summary']['classification_audit']['missing_category_count']}",
+        "- The following leaf labels need fallback handling:",
+        "",
+        "| Leaf label | Products | Issue | Parent paths | Required handling |",
+        "| --- | ---: | --- | ---: | --- |",
     ]
-    for category, item in payload["category_playbook"].items():
-        questions = ", ".join(
-            f"`{question['ask_attribute']}` (coverage {question['coverage']:.1%})"
-            for question in item["high_value_questions"]
+    for issue in payload["catalog_summary"]["classification_audit"]["quality_issues"]:
+        lines.append(
+            f"| {issue['category']} | {issue['product_count']} | {issue['issue_type']} | "
+            f"{issue['distinct_parent_paths']} | {issue['handling']} |"
         )
-        lines.extend([
-            f"### {category} ({item['product_count']} products)",
-            "",
-            f"Priority: {questions}.",
-            "",
-        ])
+    lines.extend([
+        "",
+        "## Question order table",
+        "",
+        "The percentages show how often the vocabulary found usable catalog evidence. Size coverage is conservative because numeric sizes are parsed separately by member 2.",
+        "",
+        "| Category | Products | Ask 1 | Ask 2 | Ask 3 | Ask 4 |",
+        "| --- | ---: | --- | --- | --- | --- |",
+    ])
+    for category, item in payload["category_playbook"].items():
+        questions = [
+            f"`{question['ask_attribute']}`: {question['question']} ({question['coverage']:.1%})"
+            for question in item["question_order"]
+        ]
+        lines.append(f"| {category} | {item['product_count']} | " + " | ".join(questions) + " |")
+    lines.extend([
+        "",
+        "## No-preference flow",
+        "",
+        "For every row: record the current attribute as `neutral`, move to the next column, and never ask the neutral attribute again. If all four are answered, neutral, already asked, or unable to narrow live candidates, use `ask_attribute = null`.",
+        "",
+        "## Evidence boundary",
+        "",
+        "All counts, vocabulary, aliases, category families, and classification findings come from participant-visible fields in `data/catalog.jsonl`. Public ground truth, target ASINs, and session-specific answer rules were not used.",
+    ])
     return "\n".join(lines)
 
 
@@ -279,10 +458,11 @@ def main() -> None:
     parser.add_argument("--catalog", type=Path, default=Path("data/catalog.jsonl"))
     parser.add_argument("--output", type=Path, default=Path("artifacts/lexicon.json"))
     parser.add_argument("--playbook-output", type=Path, default=Path("artifacts/category_playbook.md"))
-    parser.add_argument("--top-categories", type=int, default=30)
+    parser.add_argument("--top-categories", type=int, default=60)
     args = parser.parse_args()
     payload = build(args.catalog, args.top_categories)
     args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.playbook_output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     args.playbook_output.write_text(render_playbook(payload) + "\n", encoding="utf-8")
     print(f"wrote {args.output} and {args.playbook_output} from {payload['source']['product_count']} products")

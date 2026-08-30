@@ -1,84 +1,29 @@
 from __future__ import annotations
 
-import json
-import re
-import sqlite3
 from pathlib import Path
 
-from starter.constraints import parse_constraints
+from starter.constraints import apply_hard_filters, extract_basic_hard_constraints, parse_constraints
+from starter.ranking import ranking_config_from_environment, rerank_candidates
+from starter.retrieval import CatalogRetriever, ensure_valid_recommendations, is_generic_message
+from starter.state import SessionState
 from starter.dialogue_policy import QuestionPolicy
 from starter.intent import IntentResult, recognize_intent
-from starter.state import SessionState
-
-
-TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
-STOPWORDS = {
-    "a", "an", "and", "are", "as", "at", "be", "but", "by", "for", "from",
-    "i", "in", "is", "it", "me", "my", "of", "on", "or", "please", "some",
-    "that", "the", "this", "to", "want", "with", "would", "you", "looking",
-}
-
-
-def _text(value: object) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, dict):
-        return " ".join(f"{key} {item}" for key, item in value.items())
-    if isinstance(value, list):
-        return " ".join(str(item) for item in value)
-    return str(value)
-
-
-def _terms(text: str) -> list[str]:
-    return [
-        token.lower()
-        for token in TOKEN_RE.findall(text)
-        if len(token) > 1 and token.lower() not in STOPWORDS
-    ]
 
 
 class Agent:
-    """BM25 baseline with contract-compliant per-session dialogue state."""
+    """Day 1 retrieval-oriented agent with safe fallbacks and no LLM dependency."""
 
     def __init__(self, catalog_path: str | Path = "data/catalog.jsonl") -> None:
-        self.catalog_path = Path(catalog_path)
-        self.connection = sqlite3.connect(":memory:")
+        self.retriever = CatalogRetriever(catalog_path)
+        self.ranking_config = ranking_config_from_environment()
         self._sessions: dict[str, SessionState] = {}
-        self._intent_history: dict[str, list[IntentResult]] = {}
+        self._profiles: dict[str, dict] = {}
         self.question_policy = QuestionPolicy()
-        self._build_index()
-
-    def _build_index(self) -> None:
-        cursor = self.connection.cursor()
-        cursor.execute(
-            "CREATE VIRTUAL TABLE products USING fts5("
-            "parent_asin UNINDEXED, title, categories, features, details, store, description, "
-            "tokenize='unicode61 remove_diacritics 2')"
-        )
-        batch: list[tuple[str, str, str, str, str, str, str]] = []
-        with self.catalog_path.open(encoding="utf-8") as handle:
-            for line in handle:
-                product = json.loads(line)
-                batch.append(
-                    (
-                        str(product["parent_asin"]),
-                        _text(product.get("title")),
-                        _text(product.get("categories")),
-                        _text(product.get("features")),
-                        _text(product.get("details")),
-                        _text(product.get("store")),
-                        _text(product.get("description")),
-                    )
-                )
-                if len(batch) >= 1000:
-                    cursor.executemany("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?)", batch)
-                    batch.clear()
-        if batch:
-            cursor.executemany("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?)", batch)
-        self.connection.commit()
+        self._intent_history: dict[str, list[IntentResult]] = {}
 
     def reset(self, session_id: str, user_profile: dict) -> None:
         self._sessions[session_id] = SessionState.create(session_id, user_profile)
+        self._profiles[session_id] = user_profile
         self._intent_history[session_id] = []
 
     def respond(
@@ -88,29 +33,83 @@ class Agent:
         turn: int,
         top_k: int,
     ) -> dict:
-        state = self._sessions.get(session_id)
-        if state is None:
+        session_state = self._sessions.get(session_id)
+        if session_state is None:
             raise RuntimeError("reset must be called before respond")
+
         constraints = parse_constraints(
             user_message,
-            last_asked_attribute=state.last_asked_attribute,
+            last_asked_attribute=session_state.last_asked_attribute,
         )
-        self._intent_history[session_id].append(recognize_intent(user_message, constraints))
-        state.apply(constraints, turn)
-        unique_terms = list(dict.fromkeys(_terms(user_message)))[:40]
-        expression = " OR ".join(f'"{term}"' for term in unique_terms)
-        if not expression:
-            recommendations: list[dict] = []
+        intent_result = recognize_intent(user_message, constraints)
+        self._intent_history[session_id].append(intent_result)
+        session_state.apply(constraints, turn)
+        user_profile = self._profiles.get(session_id, {})
+        hard_constraints = session_state.hard_constraints or extract_basic_hard_constraints(user_message)
+        fallback = self.retriever.fallback_candidates(user_message, limit=max(50, top_k))
+        generic_message = is_generic_message(user_message)
+        if generic_message:
+            route_lists = [
+                self.retriever.retrieve_category(session_state, user_message, limit=50),
+                self.retriever.retrieve_current_message(user_message, limit=50),
+                self.retriever.retrieve_current_state(session_state, limit=50),
+                self.retriever.retrieve_attribute_profile(session_state, user_profile, limit=50),
+            ]
+            route_lists.extend([
+                self.retriever.retrieve_browsing_profile(session_state, user_profile, user_message, limit=25),
+                self.retriever.retrieve_popular_category(limit=25),
+            ])
         else:
-            rows = self.connection.execute(
-                "SELECT parent_asin FROM products WHERE products MATCH ? "
-                "ORDER BY bm25(products, 0.0, 6.0, 4.0, 2.5, 2.5, 1.5, 1.0) LIMIT ?",
-                (expression, top_k),
-            ).fetchall()
-            recommendations = [{"parent_asin": str(row[0])} for row in rows]
-        decision = self.question_policy.decide(state)
+            route_lists = [
+                self.retriever.retrieve_current_message(user_message, limit=50),
+                self.retriever.retrieve_current_state(session_state, limit=50),
+                self.retriever.retrieve_category(session_state, user_message, limit=50),
+                self.retriever.retrieve_attribute_profile(session_state, user_profile, limit=50),
+            ]
+        route_lists.append(fallback)
+        candidates = [candidate for route_candidates in route_lists for candidate in route_candidates]
+        unique_candidates: list[dict] = []
+        seen_asins: set[str] = set()
+        for candidate in candidates:
+            parent_asin = str(candidate.get("parent_asin") or "").strip()
+            if not parent_asin or parent_asin in seen_asins:
+                continue
+            seen_asins.add(parent_asin)
+            unique_candidates.append(candidate)
+        filtered_unique = apply_hard_filters(
+            unique_candidates,
+            hard_constraints,
+            self.retriever.product_lookup,
+            min_results=top_k,
+        )
+        allowed_asins = {
+            str(candidate.get("parent_asin") or "").strip()
+            for candidate in filtered_unique
+        }
+        filtered = [
+            candidate
+            for candidate in candidates
+            if str(candidate.get("parent_asin") or "").strip() in allowed_asins
+        ]
+        ranked = rerank_candidates(
+            filtered,
+            session_state,
+            top_k=top_k,
+            config=self.ranking_config,
+        )
+        recommendations = ensure_valid_recommendations(
+            [
+                {"parent_asin": candidate["parent_asin"], "score": candidate["final_score"]}
+                for candidate in ranked
+            ],
+            self.retriever.catalog_ids,
+            fallback,
+            top_k=top_k,
+        )
+        decision = self.question_policy.decide(session_state)
         if decision.ask_attribute is not None:
-            state.mark_asked(decision.ask_attribute)
+            session_state.mark_asked(decision.ask_attribute)
+
         return {
             "message": decision.message,
             "ask_attribute": decision.ask_attribute,

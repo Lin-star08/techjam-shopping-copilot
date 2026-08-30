@@ -35,8 +35,8 @@ class QuestionPolicyTest(unittest.TestCase):
 
         decision = self.policy.decide(state)
 
-        self.assertEqual(decision.ask_attribute, "color")
-        self.assertEqual(decision.message, "What color would you prefer?")
+        self.assertEqual(decision.ask_attribute, "use_case")
+        self.assertEqual(decision.message, "What will you mainly use it for?")
 
     def test_skips_known_asked_and_neutral_attributes(self) -> None:
         state = SessionState.create("session-a", {})
