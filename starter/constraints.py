@@ -60,6 +60,18 @@ class Constraint(TypedDict):
     raw_text: str
 
 
+def has_no_preference_marker(user_message: str) -> bool:
+    """Return whether the message explicitly declines to state a preference."""
+
+    return any(pattern.search(str(user_message)) for pattern in NEUTRAL_MARKERS)
+
+
+def has_override_marker(user_message: str) -> bool:
+    """Return whether the message explicitly changes or replaces prior intent."""
+
+    return bool(OVERRIDE_MARKER.search(str(user_message)))
+
+
 @lru_cache(maxsize=4)
 def load_lexicon(path: str = str(DEFAULT_LEXICON_PATH)) -> dict:
     """Load the catalog-derived lexicon from the contract-defined location."""
@@ -85,7 +97,7 @@ def _named_attributes(text: str) -> list[str]:
 
 
 def _neutral_attributes(text: str, last_asked_attribute: str | None) -> list[str]:
-    if not any(pattern.search(text) for pattern in NEUTRAL_MARKERS):
+    if not has_no_preference_marker(text):
         return []
     named = _named_attributes(text)
     if named:
@@ -178,7 +190,7 @@ def parse_constraints(
         _constraint(attribute, "no_preference", "neutral", 1.0, raw_text)
         for attribute in neutral
     ]
-    override = bool(OVERRIDE_MARKER.search(text))
+    override = has_override_marker(text)
     seen = set(neutral)
 
     budget = BUDGET_RE.search(text)
