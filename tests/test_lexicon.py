@@ -12,7 +12,7 @@ class LexiconTest(unittest.TestCase):
     def test_delivery_artifact_is_loadable(self) -> None:
         artifact = Path("artifacts/lexicon.json")
         payload = json.loads(artifact.read_text(encoding="utf-8"))
-        self.assertEqual(payload["version"], "v1.2")
+        self.assertEqual(payload["version"], "v2")
         self.assertEqual(payload["source"]["product_count"], 50_000)
         self.assertFalse(payload["source"]["public_ground_truth_used"])
         self.assertIn("size", payload["vocabulary"])
