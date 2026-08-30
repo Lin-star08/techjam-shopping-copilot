@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
+from starter.agent import Agent
 from starter.ranking import aggregate_candidates, rerank_candidates
 
 
@@ -114,6 +119,107 @@ class RankingTest(unittest.TestCase):
             {"parent_asin": "B", "route": "message", "route_rank": 1},
         ])
         self.assertEqual([item["parent_asin"] for item in result], ["B", "A"])
+
+    def test_actual_retrieval_routes_are_fused(self) -> None:
+        candidates = [
+            {
+                "parent_asin": "A",
+                "route": "current_message",
+                "route_rank": 2,
+                "route_score": -12.0,
+                "matched_terms": ["brown", "shoes"],
+                "debug_reason": "matched via current_message",
+            },
+            {
+                "parent_asin": "A",
+                "route": "current_state",
+                "route_rank": 3,
+                "route_score": -0.01,
+                "matched_terms": ["shoes", "walking"],
+                "debug_reason": "matched via current_state",
+            },
+            {
+                "parent_asin": "B",
+                "route": "category",
+                "route_rank": 1,
+                "route_score": 0.0,
+                "matched_terms": ["shoes"],
+                "debug_reason": "matched via category",
+            },
+        ]
+
+        result = rerank_candidates(candidates)
+
+        self.assertEqual([item["parent_asin"] for item in result], ["A", "B"])
+        self.assertEqual(
+            {evidence["route"] for evidence in result[0]["route_evidence"]},
+            {"current_message", "current_state"},
+        )
+
+    def test_invalid_route_ranks_do_not_crash_or_score(self) -> None:
+        result = rerank_candidates([
+            {"parent_asin": "ZERO", "route": "current_message", "route_rank": 0},
+            {"parent_asin": "TEXT", "route": "current_state", "route_rank": "1"},
+            {"parent_asin": "BOOL", "route": "category", "route_rank": True},
+        ])
+
+        self.assertEqual([item["parent_asin"] for item in result], ["BOOL", "TEXT", "ZERO"])
+        self.assertTrue(all(item["final_score"] == 0.0 for item in result))
+
+    def test_agent_passes_multi_route_candidates_through_ranking(self) -> None:
+        products = [
+            {
+                "parent_asin": "A",
+                "title": "Brown leather walking shoes",
+                "features": ["comfortable"],
+                "details": {"color": "brown", "material": "leather"},
+                "description": ["walking shoes"],
+                "categories": ["Clothing", "Shoes"],
+                "store": "Example",
+                "price": 49.0,
+            },
+            {
+                "parent_asin": "B",
+                "title": "Black winter boots",
+                "features": ["warm"],
+                "details": {"color": "black"},
+                "description": ["outdoor boots"],
+                "categories": ["Clothing", "Boots"],
+                "store": "Example",
+                "price": 89.0,
+            },
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            catalog_path = Path(directory) / "catalog.jsonl"
+            catalog_path.write_text(
+                "".join(json.dumps(product) + "\n" for product in products),
+                encoding="utf-8",
+            )
+            agent = Agent(catalog_path)
+            agent.reset("s1", {"preference_tags": ["comfort"], "summary": "walking shoes"})
+            captured_candidates: list[dict] = []
+
+            real_rerank = rerank_candidates
+
+            def capture(candidates, state=None, top_k=10, config=None):
+                captured_candidates.extend(candidates)
+                return real_rerank(candidates, state, top_k, config)
+
+            with patch("starter.agent.rerank_candidates", side_effect=capture):
+                response = agent.respond("s1", "brown leather shoes", 1, 10)
+
+        routes_for_a = {
+            candidate["route"]
+            for candidate in captured_candidates
+            if candidate["parent_asin"] == "A"
+        }
+        self.assertIn("current_message", routes_for_a)
+        self.assertIn("current_state", routes_for_a)
+        self.assertEqual(
+            len(response["recommendations"]),
+            len({item["parent_asin"] for item in response["recommendations"]}),
+        )
+        self.assertTrue(all(set(item) == {"parent_asin", "score"} for item in response["recommendations"]))
 
 
 if __name__ == "__main__":

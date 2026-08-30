@@ -3,7 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from starter.constraints import apply_hard_filters, extract_basic_hard_constraints, parse_constraints
-from starter.retrieval import CatalogRetriever, ensure_valid_recommendations, is_generic_message, merge_candidates
+from starter.ranking import rerank_candidates
+from starter.retrieval import CatalogRetriever, ensure_valid_recommendations, is_generic_message
 from starter.state import SessionState
 
 
@@ -58,18 +59,36 @@ class Agent:
                 self.retriever.retrieve_attribute_profile(session_state, user_profile, limit=50),
             ]
         route_lists.append(fallback)
-        candidates = merge_candidates(
-            route_lists,
-            limit=100,
-        )
-        filtered = apply_hard_filters(
-            candidates,
+        candidates = [candidate for route_candidates in route_lists for candidate in route_candidates]
+        unique_candidates: list[dict] = []
+        seen_asins: set[str] = set()
+        for candidate in candidates:
+            parent_asin = str(candidate.get("parent_asin") or "").strip()
+            if not parent_asin or parent_asin in seen_asins:
+                continue
+            seen_asins.add(parent_asin)
+            unique_candidates.append(candidate)
+        filtered_unique = apply_hard_filters(
+            unique_candidates,
             hard_constraints,
             self.retriever.product_lookup,
             min_results=top_k,
         )
+        allowed_asins = {
+            str(candidate.get("parent_asin") or "").strip()
+            for candidate in filtered_unique
+        }
+        filtered = [
+            candidate
+            for candidate in candidates
+            if str(candidate.get("parent_asin") or "").strip() in allowed_asins
+        ]
+        ranked = rerank_candidates(filtered, session_state, top_k=top_k)
         recommendations = ensure_valid_recommendations(
-            filtered,
+            [
+                {"parent_asin": candidate["parent_asin"], "score": candidate["final_score"]}
+                for candidate in ranked
+            ],
             self.retriever.catalog_ids,
             fallback,
             top_k=top_k,
