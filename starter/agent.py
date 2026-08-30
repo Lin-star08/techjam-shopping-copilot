@@ -6,6 +6,8 @@ import sqlite3
 from pathlib import Path
 
 from starter.constraints import parse_constraints
+from starter.dialogue_policy import QuestionPolicy
+from starter.intent import IntentResult, recognize_intent
 from starter.state import SessionState
 
 
@@ -42,6 +44,8 @@ class Agent:
         self.catalog_path = Path(catalog_path)
         self.connection = sqlite3.connect(":memory:")
         self._sessions: dict[str, SessionState] = {}
+        self._intent_history: dict[str, list[IntentResult]] = {}
+        self.question_policy = QuestionPolicy()
         self._build_index()
 
     def _build_index(self) -> None:
@@ -75,6 +79,7 @@ class Agent:
 
     def reset(self, session_id: str, user_profile: dict) -> None:
         self._sessions[session_id] = SessionState.create(session_id, user_profile)
+        self._intent_history[session_id] = []
 
     def respond(
         self,
@@ -90,6 +95,7 @@ class Agent:
             user_message,
             last_asked_attribute=state.last_asked_attribute,
         )
+        self._intent_history[session_id].append(recognize_intent(user_message, constraints))
         state.apply(constraints, turn)
         unique_terms = list(dict.fromkeys(_terms(user_message)))[:40]
         expression = " OR ".join(f'"{term}"' for term in unique_terms)
@@ -102,9 +108,12 @@ class Agent:
                 (expression, top_k),
             ).fetchall()
             recommendations = [{"parent_asin": str(row[0])} for row in rows]
+        decision = self.question_policy.decide(state)
+        if decision.ask_attribute is not None:
+            state.mark_asked(decision.ask_attribute)
         return {
-            "message": "Here are the closest matches I found.",
-            "ask_attribute": None,
+            "message": decision.message,
+            "ask_attribute": decision.ask_attribute,
             "recommendations": recommendations,
             "usage": {"prompt_tokens": 0, "completion_tokens": 0},
         }
