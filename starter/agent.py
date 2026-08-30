@@ -5,6 +5,9 @@ import re
 import sqlite3
 from pathlib import Path
 
+from starter.constraints import parse_constraints
+from starter.state import SessionState
+
 
 TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
 STOPWORDS = {
@@ -33,12 +36,12 @@ def _terms(text: str) -> list[str]:
 
 
 class Agent:
-    """Editable weak baseline: stateless BM25 retrieval with no LLM dependency."""
+    """BM25 baseline with contract-compliant per-session dialogue state."""
 
     def __init__(self, catalog_path: str | Path = "data/catalog.jsonl") -> None:
         self.catalog_path = Path(catalog_path)
         self.connection = sqlite3.connect(":memory:")
-        self._sessions: set[str] = set()
+        self._sessions: dict[str, SessionState] = {}
         self._build_index()
 
     def _build_index(self) -> None:
@@ -71,8 +74,7 @@ class Agent:
         self.connection.commit()
 
     def reset(self, session_id: str, user_profile: dict) -> None:
-        # The profile is anonymized and may be used for personalization.
-        self._sessions.add(session_id)
+        self._sessions[session_id] = SessionState.create(session_id, user_profile)
 
     def respond(
         self,
@@ -81,8 +83,14 @@ class Agent:
         turn: int,
         top_k: int,
     ) -> dict:
-        if session_id not in self._sessions:
+        state = self._sessions.get(session_id)
+        if state is None:
             raise RuntimeError("reset must be called before respond")
+        constraints = parse_constraints(
+            user_message,
+            last_asked_attribute=state.last_asked_attribute,
+        )
+        state.apply(constraints, turn)
         unique_terms = list(dict.fromkeys(_terms(user_message)))[:40]
         expression = " OR ".join(f'"{term}"' for term in unique_terms)
         if not expression:
