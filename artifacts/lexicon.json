@@ -1,5 +1,5 @@
 {
-  "version": "v1.2",
+  "version": "v2",
   "schema_version": "1.1",
   "updated_at": "2026-08-30",
   "generated_on": "2026-08-30",
@@ -3961,8 +3961,8 @@
           "information_value": 0.2753,
           "top_values": [
             "winter",
-            "work",
             "everyday",
+            "work",
             "walking",
             "office",
             "outdoor",
@@ -4026,8 +4026,8 @@
           "information_value": 0.2753,
           "top_values": [
             "winter",
-            "work",
             "everyday",
+            "work",
             "walking",
             "office",
             "outdoor",
@@ -4097,8 +4097,8 @@
           "top_values": [
             "plus-size",
             "one-size",
-            "petite",
-            "big-and-tall"
+            "big-and-tall",
+            "petite"
           ],
           "reason": "Confirm fit or capacity before cosmetic preferences."
         },
@@ -4163,8 +4163,8 @@
           "top_values": [
             "plus-size",
             "one-size",
-            "petite",
-            "big-and-tall"
+            "big-and-tall",
+            "petite"
           ],
           "reason": "Confirm fit or capacity before cosmetic preferences."
         },
@@ -4691,8 +4691,8 @@
             "tennis",
             "work",
             "outdoor",
-            "everyday",
-            "travel"
+            "travel",
+            "everyday"
           ],
           "reason": "Establish the shopping goal first."
         },
@@ -4756,8 +4756,8 @@
             "tennis",
             "work",
             "outdoor",
-            "everyday",
-            "travel"
+            "travel",
+            "everyday"
           ],
           "reason": "Establish the shopping goal first."
         },
@@ -5886,8 +5886,8 @@
           "top_values": [
             "comfortable",
             "cushioned",
-            "durable",
             "lightweight",
+            "durable",
             "padded",
             "breathable",
             "waterproof",
@@ -5949,8 +5949,8 @@
           "top_values": [
             "comfortable",
             "cushioned",
-            "durable",
             "lightweight",
+            "durable",
             "padded",
             "breathable",
             "waterproof",
@@ -6359,8 +6359,8 @@
             "short sleeve",
             "casual",
             "classic",
-            "sleeveless",
             "crew-neck",
+            "sleeveless",
             "loose fit"
           ],
           "reason": "Narrow the look or fit."
@@ -6426,8 +6426,8 @@
             "short sleeve",
             "casual",
             "classic",
-            "sleeveless",
             "crew-neck",
+            "sleeveless",
             "loose fit"
           ],
           "reason": "Narrow the look or fit."
@@ -7429,8 +7429,8 @@
             "sleep",
             "yoga",
             "wedding",
-            "party",
             "gift",
+            "party",
             "workout",
             "running"
           ],

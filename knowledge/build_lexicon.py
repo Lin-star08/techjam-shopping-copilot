@@ -348,7 +348,7 @@ def build(catalog_path: Path, top_categories: int) -> dict:
         })
 
     return {
-        "version": "v1.2",
+        "version": "v2",
         "schema_version": "1.1",
         "updated_at": date.today().isoformat(),
         "generated_on": date.today().isoformat(),
@@ -391,7 +391,7 @@ def build(catalog_path: Path, top_categories: int) -> dict:
 
 def render_playbook(payload: dict) -> str:
     lines = [
-        "# Category Question Playbook v1.2",
+        "# Category Question Playbook v2",
         "",
         "This file is generated from `data/catalog.jsonl` by `knowledge/build_lexicon.py`.",
         "It does not use public ground truth. The machine-readable source of truth is",
