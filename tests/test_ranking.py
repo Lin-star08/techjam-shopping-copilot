@@ -3,14 +3,26 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from math import isclose
+from os import environ
 from pathlib import Path
 from unittest.mock import patch
 
 from starter.agent import Agent
-from starter.ranking import aggregate_candidates, rerank_candidates
+from starter.ranking import (
+    RANKING_CONFIGS,
+    aggregate_candidates,
+    ranking_config_from_environment,
+    ranking_score_breakdown,
+    reciprocal_rank_fusion_score,
+    rerank_candidates,
+)
 
 
 class RankingTest(unittest.TestCase):
+    def tearDown(self) -> None:
+        environ.pop("RANKING_CONFIG_NAME", None)
+
     def test_duplicate_asin_is_returned_once_with_both_routes(self) -> None:
         candidates = [
             {"parent_asin": "A", "route": "message", "route_rank": 2},
@@ -220,6 +232,70 @@ class RankingTest(unittest.TestCase):
             len({item["parent_asin"] for item in response["recommendations"]}),
         )
         self.assertTrue(all(set(item) == {"parent_asin", "score"} for item in response["recommendations"]))
+
+    def test_unset_and_equal_configs_preserve_v11_equal_weights(self) -> None:
+        environ.pop("RANKING_CONFIG_NAME", None)
+        unset = ranking_config_from_environment()
+        environ["RANKING_CONFIG_NAME"] = "equal"
+        equal = ranking_config_from_environment()
+
+        self.assertEqual(unset, equal)
+        self.assertEqual(set(equal["route_weights"].values()), {1.0})
+        self.assertEqual(equal["rrf_k"], 60.0)
+
+    def test_unknown_named_config_fails_clearly(self) -> None:
+        environ["RANKING_CONFIG_NAME"] = "not-a-config"
+
+        with self.assertRaisesRegex(ValueError, "unknown RANKING_CONFIG_NAME"):
+            ranking_config_from_environment()
+
+    def test_current_message_weight_changes_expected_order(self) -> None:
+        candidates = [
+            {"parent_asin": "EXPLICIT", "route": "current_message", "route_rank": 1},
+            {"parent_asin": "MULTI", "route": "popular_category", "route_rank": 30},
+            {"parent_asin": "MULTI", "route": "fallback_catalog", "route_rank": 30},
+        ]
+
+        equal = rerank_candidates(candidates, config=RANKING_CONFIGS["equal"])
+        stronger = rerank_candidates(candidates, config=RANKING_CONFIGS["stronger"])
+
+        self.assertEqual(equal[0]["parent_asin"], "MULTI")
+        self.assertEqual(stronger[0]["parent_asin"], "EXPLICIT")
+
+    def test_unknown_route_uses_default_weight(self) -> None:
+        aggregated = aggregate_candidates([
+            {"parent_asin": "A", "route": "future_route", "route_rank": 2},
+        ])[0]
+        config = {"rrf_k": 60.0, "route_weights": {}, "default_route_weight": 0.5}
+
+        self.assertEqual(reciprocal_rank_fusion_score(aggregated, config), 0.5 / 62.0)
+
+    def test_score_breakdown_sums_to_production_score_without_changing_order(self) -> None:
+        candidates = [
+            {"parent_asin": "A", "route": "current_message", "route_rank": 2},
+            {"parent_asin": "A", "route": "current_message", "route_rank": 5},
+            {"parent_asin": "A", "route": "category", "route_rank": 3},
+            {"parent_asin": "B", "route": "current_state", "route_rank": 1},
+        ]
+        ranked_before = rerank_candidates(candidates, config=RANKING_CONFIGS["mild"])
+        breakdowns = [
+            ranking_score_breakdown(item, RANKING_CONFIGS["mild"])
+            for item in ranked_before
+        ]
+        ranked_after = rerank_candidates(candidates, config=RANKING_CONFIGS["mild"])
+
+        self.assertEqual(ranked_before, ranked_after)
+        for item, breakdown in zip(ranked_before, breakdowns):
+            self.assertTrue(isclose(item["final_score"], breakdown["final_score"]))
+            self.assertTrue(isclose(
+                breakdown["final_score"],
+                sum(part["contribution"] for part in breakdown["contributions"]),
+            ))
+        a_breakdown = next(item for item in breakdowns if item["parent_asin"] == "A")
+        self.assertEqual(
+            [part["route"] for part in a_breakdown["contributions"]],
+            ["category", "current_message"],
+        )
 
 
 if __name__ == "__main__":

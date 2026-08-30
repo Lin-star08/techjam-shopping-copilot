@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from starter.constraints import apply_hard_filters, extract_basic_hard_constraints, parse_constraints
-from starter.ranking import rerank_candidates
+from starter.ranking import ranking_config_from_environment, rerank_candidates
 from starter.retrieval import CatalogRetriever, ensure_valid_recommendations, is_generic_message
 from starter.state import SessionState
 
@@ -13,6 +13,7 @@ class Agent:
 
     def __init__(self, catalog_path: str | Path = "data/catalog.jsonl") -> None:
         self.retriever = CatalogRetriever(catalog_path)
+        self.ranking_config = ranking_config_from_environment()
         self._sessions: dict[str, SessionState] = {}
         self._profiles: dict[str, dict] = {}
 
@@ -83,7 +84,12 @@ class Agent:
             for candidate in candidates
             if str(candidate.get("parent_asin") or "").strip() in allowed_asins
         ]
-        ranked = rerank_candidates(filtered, session_state, top_k=top_k)
+        ranked = rerank_candidates(
+            filtered,
+            session_state,
+            top_k=top_k,
+            config=self.ranking_config,
+        )
         recommendations = ensure_valid_recommendations(
             [
                 {"parent_asin": candidate["parent_asin"], "score": candidate["final_score"]}
