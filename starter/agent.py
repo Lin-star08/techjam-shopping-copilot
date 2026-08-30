@@ -6,6 +6,8 @@ from starter.constraints import apply_hard_filters, extract_basic_hard_constrain
 from starter.ranking import ranking_config_from_environment, rerank_candidates
 from starter.retrieval import CatalogRetriever, ensure_valid_recommendations, is_generic_message
 from starter.state import SessionState
+from starter.dialogue_policy import QuestionPolicy
+from starter.intent import IntentResult, recognize_intent
 
 
 class Agent:
@@ -16,10 +18,13 @@ class Agent:
         self.ranking_config = ranking_config_from_environment()
         self._sessions: dict[str, SessionState] = {}
         self._profiles: dict[str, dict] = {}
+        self.question_policy = QuestionPolicy()
+        self._intent_history: dict[str, list[IntentResult]] = {}
 
     def reset(self, session_id: str, user_profile: dict) -> None:
         self._sessions[session_id] = SessionState.create(session_id, user_profile)
         self._profiles[session_id] = user_profile
+        self._intent_history[session_id] = []
 
     def respond(
         self,
@@ -36,6 +41,8 @@ class Agent:
             user_message,
             last_asked_attribute=session_state.last_asked_attribute,
         )
+        intent_result = recognize_intent(user_message, constraints)
+        self._intent_history[session_id].append(intent_result)
         session_state.apply(constraints, turn)
         user_profile = self._profiles.get(session_id, {})
         hard_constraints = session_state.hard_constraints or extract_basic_hard_constraints(user_message)
@@ -99,9 +106,13 @@ class Agent:
             fallback,
             top_k=top_k,
         )
+        decision = self.question_policy.decide(session_state)
+        if decision.ask_attribute is not None:
+            session_state.mark_asked(decision.ask_attribute)
+
         return {
-            "message": "Here are the closest matches I found.",
-            "ask_attribute": None,
+            "message": decision.message,
+            "ask_attribute": decision.ask_attribute,
             "recommendations": recommendations,
             "usage": {"prompt_tokens": 0, "completion_tokens": 0},
         }

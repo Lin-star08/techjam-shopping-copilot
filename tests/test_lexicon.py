@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from knowledge.build_lexicon import ALLOWED_ASK_ATTRIBUTES, build, render_playbook
+from artifacts.build_lexicon import ALLOWED_ASK_ATTRIBUTES, build, render_playbook
 
 
 class LexiconTest(unittest.TestCase):
@@ -37,7 +37,10 @@ class LexiconTest(unittest.TestCase):
         self.assertEqual(questions[0]["ask_attribute"], "use_case")
         self.assertEqual(questions[1]["ask_attribute"], "size")
         self.assertIn("black", payload["vocabulary"]["color"]["values"])
-        self.assertIn("public ground truth", render_playbook(payload))
+        playbook = render_playbook(payload)
+        self.assertIn("public ground truth", playbook)
+        self.assertIn("`artifacts/lexicon.json`", playbook)
+        self.assertNotIn("`knowledge/lexicon.json`", playbook)
 
 
 if __name__ == "__main__":
