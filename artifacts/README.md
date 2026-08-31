@@ -1,73 +1,73 @@
-# Artifacts 交付说明
+# Artifacts
 
-本目录保存团队共享的知识资产和交付说明。文件用途及负责人以[团队交付接口说明](<../team_delivery_contract(1).md>)为准。
+This directory contains the shared knowledge assets and supporting notes used by the team. Ownership and delivery rules follow the [team delivery contract](<../team_delivery_contract(1).md>).
 
-## 1号正式交付
+## Member 1 Deliverables
 
-| 文件 | 内容 | 交给谁 | 验收方式 |
+| File | Purpose | Consumers | Acceptance check |
 | --- | --- | --- | --- |
-| `lexicon.json` | 机器可读的商品词典、alias、类目规则、覆盖统计和追问顺序 | 2/3/4号 | 能被 Python `json.load()` 直接读取；词条和统计来自catalog |
-| `category_playbook.md` | 给人阅读的类目观察、追问顺序和交接要点 | 全组 | 与 `lexicon.json` 中的 `category_playbook` 一致 |
-| `failure_taxonomy.md` | 已确认的问题、处理原则、责任模块和回归检查项 | 2/3/4/5号 | 每条结论有数据依据，不包含针对public答案的特判 |
+| `lexicon.json` | Machine-readable vocabulary, aliases, category rules, coverage statistics, and question order | Members 2, 3, and 4 | Loads with Python `json.load()`; terms and statistics come from the catalog |
+| `category_playbook.md` | Human-readable category findings, follow-up order, and handoff notes | Whole team | Matches the `category_playbook` section in `lexicon.json` |
+| `failure_taxonomy.md` | Confirmed failure patterns, handling rules, owners, and regression checks | Members 2, 3, 4, and 5 | Every finding is evidence-backed and contains no public-answer special case |
 
-`build_lexicon.py` 是配套生成器，用于重建 `lexicon.json` 和 `category_playbook.md`。它不是额外的业务接口，但需要与生成结果一起维护，否则下次重建会覆盖人工修改。
+`build_lexicon.py` rebuilds `lexicon.json` and `category_playbook.md`. Keep the generator in sync with both generated files so a later rebuild does not overwrite a valid change.
 
-## 当前版本
+## Current Version
 
-- 资产版本：V3
-- Schema：`1.3`
-- Catalog：`data/catalog.jsonl`
-- 商品数：50,000
-- Evidence词：202
-- 类目alias：171
-- 质量标记：accurate 36、broad 165、ambiguous 13、noise 0；标记可以重叠
-- Public ground truth：未用于生成词典、alias或分类规则
+- Asset version: V3
+- Schema version: `1.3`
+- Catalog: `data/catalog.jsonl`
+- Products scanned: 50,000
+- Evidence terms: 202
+- Category aliases: 171
+- Quality flags: 36 accurate, 165 broad, 13 ambiguous, and 0 noise; flags may overlap
+- Public ground truth: not used to build vocabulary, aliases, or category rules
 
-## 下游怎么使用
+## Downstream Use
 
-- 2号从 `lexicon.json` 读取属性词表和 `category_playbook[*].question_order`。已经问过、用户表示无所谓或当前状态已有答案的属性要跳过。
-- 3号使用alias、字段覆盖率和不可靠类目规则。歧义词只作软证据，不能仅凭alias或宽泛叶子类目执行hard filter。
-- 4号可参考evidence质量标记设置强弱：准确且明确的匹配可以使用较强证据；broad需要限幅或降权；ambiguous需要结合route判断。
-- 5号在合并后运行完整评测，并根据新失败更新 `failure_taxonomy.md` 和正式实验台账。
+- Member 2 reads the attribute vocabulary and `category_playbook[*].question_order`. Attributes already answered, asked, or marked neutral should be skipped.
+- Member 3 uses aliases, field coverage, and unreliable-category rules. Ambiguous terms remain soft evidence; an alias or broad leaf alone must never trigger a hard filter.
+- Member 4 may use stronger evidence for explicit, accurate matches. Broad evidence should be capped or downweighted, while ambiguous evidence needs route context.
+- Member 5 runs the full evaluation after integration and updates the failure review and experiment log when new issues appear.
 
-## 不可靠类目的统一处理
+## Unreliable Category Rules
 
-- `Casual`：父类目作为商品类型，`casual`保留为style。
-- `Sets`：与最近的有效父类目组合，例如 `Sleepwear Sets`、`Bikini Sets`。
-- `Women`、`Men`：只表示audience，不是商品类型。
-- `Westlake`、`Clothing`：叶子标签本身不能作为商品类型；标题只能提供软推断，不能确定时继续追问。
-- 所有推断都保留原始catalog路径，便于复盘。
+- `Casual`: use the parent as the product type and keep `casual` as the style.
+- `Sets`: combine it with the nearest informative parent, such as `Sleepwear Sets` or `Bikini Sets`.
+- `Women` and `Men`: treat them as audience labels, not product types.
+- `Westlake` and `Clothing`: do not use the leaf itself as a product type. A title may provide soft evidence; ask for the category when the title is unclear.
+- Keep the original catalog path for audit whenever a derived category is used.
 
-## 重建与检查
+## Rebuild and Validate
 
-在仓库根目录运行：
+Run these commands from the repository root:
 
 ```bash
 python artifacts/build_lexicon.py
 python -m unittest discover -s tests -p "test_lexicon.py" -v
 ```
 
-也可以单独确认JSON是否合法：
+To check the JSON independently:
 
 ```bash
 python -c "import json; json.load(open('artifacts/lexicon.json', encoding='utf-8')); print('lexicon ok')"
 ```
 
-提交前至少确认：
+Before delivery, confirm that:
 
-1. `lexicon.json` 可以正常读取，`version`和`updated_at`已更新。
-2. `category_playbook.md` 与生成器输出一致。
-3. 没有修改 `evaluator/`、`data/public_set.jsonl`、`data/catalog.jsonl` 或官方评测配置。
-4. 没有API key、私有数据、public目标ASIN或单案例查表规则。
-5. 如果字段结构发生变化，先通知依赖该结构的2/3/4号。
+1. `lexicon.json` loads successfully and its `version` and `updated_at` fields are current.
+2. `category_playbook.md` matches the generator output.
+3. The change does not modify `evaluator/`, `data/public_set.jsonl`, `data/catalog.jsonl`, or the official evaluation configuration.
+4. No API keys, private data, public target ASINs, or session-specific lookup rules are included.
+5. Members 2, 3, and 4 are notified before any shared field or schema changes.
 
-## 目录中的其他文件
+## Other Files in This Directory
 
-- `experiments.md`：实验入口，按契约由5号维护、全组补充。
-- `demo_script.md`：演示提纲，按契约由5号主写。
+- `experiments.md` is the experiment-log entry point. Under the team contract, Member 5 maintains it with input from the group.
+- `demo_script.md` is the presentation outline and is primarily owned by Member 5.
 
-这两个文件不是1号的正式交付物，不应与词典版本一起随意改动。
+These two files are not part of Member 1's formal delivery and should not be changed as part of a lexicon update without coordinating with their owner.
 
-## 本次README更新的影响
+## Impact of This README Update
 
-本次只补充交付说明，没有修改 `lexicon.json` 或 `starter/` 运行代码，因此不会改变检索、排序、追问逻辑和评测结果。
+This update changes documentation only. It does not modify `lexicon.json` or any runtime code under `starter/`, so retrieval, ranking, clarification behavior, and evaluation results are unchanged.
