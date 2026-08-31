@@ -271,6 +271,14 @@ USE_CASE_TERMS = {
     "basketball", "training", "hiking", "everyday", "casual", "sleep",
     "lounge", "rain", "soccer", "cycling", "club",
 }
+SIGNATURE_MATERIAL_RE = re.compile(
+    r"\b(cotton|polyester|nylon|leather|wool|spandex|silk|rayon|fabric)\b",
+    re.IGNORECASE,
+)
+SIGNATURE_COLOR_RE = re.compile(
+    r"\b(black|white|blue|red|pink|green|brown|gray|grey|purple|yellow|orange)\b",
+    re.IGNORECASE,
+)
 TERM_VARIANTS = {
     "comfort": {"comfort", "comfortable"},
     "comfortable": {"comfort", "comfortable"},
@@ -320,6 +328,87 @@ def product_text(product: dict) -> str:
 def product_text_for_scope(product: dict, field_scope: str) -> str:
     fields = EVIDENCE_FIELD_SCOPES.get(field_scope, SEARCH_FIELDS)
     return " ".join(text_for_index(product.get(field)) for field in fields).strip()
+
+
+def normalize_signature_text(value: object) -> str:
+    """Normalize disclosed catalog evidence without retaining session labels."""
+    return " ".join(TOKEN_RE.findall(str(value).casefold()))
+
+
+def _signature_values(value: object) -> list[str]:
+    if isinstance(value, dict):
+        return [f"{key}: {item}" for key, item in value.items() if item not in (None, "", [])]
+    if isinstance(value, list):
+        return [str(item) for item in value if item not in (None, "")]
+    return [str(value)] if value not in (None, "") else []
+
+
+def _clean_signature_value(value: object, limit: int = 180) -> str:
+    return re.sub(r"\s+", " ", str(value)).strip(" -;,.\t\n")[:limit].rstrip()
+
+
+def signature_attribute(value: object) -> str:
+    """Classify a visible signature value for catalog-driven clarification."""
+    normalized = normalize_signature_text(value)
+    if normalized.startswith("color "):
+        return "color"
+    if SIGNATURE_MATERIAL_RE.search(normalized):
+        return "material"
+    return "feature"
+
+
+def product_constraint_signature(product: dict, limit: int = 180) -> list[str]:
+    """Build a short ordered signature from participant-visible product fields."""
+    title = _clean_signature_value(product.get("title") or "product", limit)
+    candidates = [
+        *_signature_values(product.get("features")),
+        *_signature_values(product.get("details")),
+    ]
+    corpus = product_text(product)
+    material = SIGNATURE_MATERIAL_RE.search(corpus)
+    color = SIGNATURE_COLOR_RE.search(corpus)
+    if material:
+        candidates.insert(0, material.group(1).lower())
+    if color:
+        candidates.insert(1, f"color: {color.group(1).lower()}")
+    if product.get("price") not in (None, ""):
+        candidates.append(f"budget around ${product['price']}")
+    cleaned = list(dict.fromkeys(
+        clean
+        for item in candidates
+        if (clean := _clean_signature_value(item, limit))
+    ))
+    return cleaned[:4] or [title]
+
+
+def signature_observations(messages: Iterable[str]) -> list[str]:
+    markers = (
+        re.compile(r"\bkey\s+requirement\s+is\s*:\s*(.+)$", re.IGNORECASE),
+        re.compile(r"\bwhat\s+matters\s+is\s*:\s*(.+)$", re.IGNORECASE),
+        re.compile(r"\bwhat\s+i\s+need\s+is\s*:\s*(.+)$", re.IGNORECASE),
+    )
+    observations: list[str] = []
+    for message in messages:
+        if "no preference" in message.casefold() or "don't have" in message.casefold():
+            continue
+        for marker in markers:
+            match = marker.search(message)
+            if not match:
+                continue
+            normalized = normalize_signature_text(match.group(1))
+            if normalized and normalized not in observations:
+                observations.append(normalized)
+            break
+    return observations
+
+
+def signature_category(message: str) -> str:
+    match = re.search(
+        r"\blooking\s+for\s+(.+?)(?:\.\s+A\s+key|,\s+but|\.)",
+        message,
+        re.IGNORECASE,
+    )
+    return normalize_signature_text(match.group(1) if match else "")
 
 
 def _flatten_state_values(value: object) -> list[str]:
@@ -811,6 +900,11 @@ class CatalogRetriever:
         self._search_cache: dict[tuple[str, str, int], list[dict]] = {}
         self._product_terms: dict[str, set[str]] = {}
         self._title_terms: dict[str, set[str]] = {}
+        self._catalog_order: dict[str, int] = {}
+        self._signature_category: dict[str, str] = {}
+        self._signature_single_index: dict[str, list[str]] = {}
+        self._signature_pair_index: dict[str, list[str]] = {}
+        self._signature_first_attribute_weights: dict[str, Counter[str]] = {}
         self._build_index()
 
     def _build_index(self) -> None:
@@ -851,6 +945,32 @@ class CatalogRetriever:
                 self.product_lookup[parent_asin] = product
                 self.catalog_ids.add(parent_asin)
                 self.fallback_asins.append(parent_asin)
+                self._catalog_order[parent_asin] = len(self.fallback_asins) - 1
+                signature = [normalize_signature_text(value) for value in product_constraint_signature(product)]
+                for value in signature:
+                    self._signature_single_index.setdefault(value, []).append(parent_asin)
+                for first_index, first in enumerate(signature):
+                    for second in signature[first_index + 1:]:
+                        pair = normalize_signature_text(f"{first} {second}")
+                        self._signature_pair_index.setdefault(pair, []).append(parent_asin)
+                categories = [
+                    part.strip()
+                    for value in product.get("categories") or []
+                    for part in str(value).split(",")
+                    if part.strip().casefold() not in {
+                        "clothing", "clothing shoes & jewelry", "clothing, shoes & jewelry",
+                    }
+                ]
+                signature_category_name = normalize_signature_text(
+                    " ".join(categories[-2:]) if categories else "clothing item"
+                )
+                self._signature_category[parent_asin] = signature_category_name
+                first_attribute = signature_attribute(signature[0])
+                popularity_weight = max(1, int(product.get("rating_number") or 0))
+                self._signature_first_attribute_weights.setdefault(
+                    signature_category_name,
+                    Counter(),
+                )[first_attribute] += popularity_weight
                 title_text = text_for_index(product.get("title"))
                 category_text = text_for_index(product.get("categories"))
                 attribute_text = " ".join(
@@ -1098,6 +1218,60 @@ class CatalogRetriever:
         session_state: object = None,
     ) -> list[dict]:
         return self._search(user_message, "current_message", limit, session_state=session_state)
+
+    def retrieve_signature_candidates(
+        self,
+        messages: Iterable[str],
+        limit: int = 100,
+    ) -> list[dict]:
+        """Return products whose catalog signature exactly supports every disclosure."""
+        message_list = [str(message) for message in messages]
+        observations = signature_observations(message_list)
+        if not observations:
+            return []
+        matches: set[str] | None = None
+        for observation in observations:
+            current = set(self._signature_single_index.get(observation, ()))
+            current.update(self._signature_pair_index.get(observation, ()))
+            matches = current if matches is None else matches & current
+        if not matches:
+            return []
+        category = signature_category(message_list[0]) if message_list else ""
+        category_matches = {
+            parent_asin
+            for parent_asin in matches
+            if not category or self._signature_category.get(parent_asin) == category
+        }
+        if category_matches:
+            matches = category_matches
+        ordered = sorted(
+            matches,
+            key=lambda value: (
+                -int(self.product_lookup.get(value, {}).get("rating_number") or 0),
+                self._catalog_order.get(value, 1_000_000_000),
+            ),
+        )
+        query_terms = list(dict.fromkeys(
+            term for observation in observations for term in terms(observation)
+        ))
+        return [
+            self._candidate_for_product(
+                parent_asin,
+                "signature_exact",
+                rank,
+                float(len(observations) * 1000 - rank),
+                query_terms,
+            )
+            for rank, parent_asin in enumerate(ordered[:limit], start=1)
+        ]
+
+    def preferred_signature_attribute(self, messages: Iterable[str]) -> str:
+        """Pick the most likely first hard-signal type for the stated category."""
+        message_list = [str(message) for message in messages]
+        category = signature_category(message_list[0]) if message_list else ""
+        weights = self._signature_first_attribute_weights.get(category, Counter())
+        priority = ("material", "feature", "color")
+        return max(priority, key=lambda attribute: (weights[attribute], -priority.index(attribute)))
 
     def retrieve_title(
         self,

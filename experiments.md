@@ -202,6 +202,108 @@ Trace 冒烟验证：`public_0002` 成功重放 10 轮，无 Agent 异常；over
 - 队友专项：`docs/reports/v2.1/team/`
 - 完整结果：`results/v2.1-evidence.json`
 
+## v2.2-public-set1-knowledge
+
+- 日期/负责人：2026-08-31 / Codex评估
+- 状态：正式评测完成；保留为V2.1线上的实验候选，暂不替换V2 final baseline
+- 工作树基线：`2e0d0b6`
+- 对比版本：`v2.1-evidence`（commit `0eb12aa`）
+- 唯一主要改动：用`data/public_set1.jsonl`的3,021条商品重建`artifacts/lexicon.json`和`artifacts/category_playbook.md`
+- 数据口径：`public_set1`仅作产品知识语料；评分仍用200条`public_set.jsonl`，检索仍用50k`catalog.jsonl`
+- 正式配置：`mild_evidence_light`，与V2.1一致
+- 模型/API/网络依赖：无
+- 测试：132/132通过
+- 正式评测耗时：102.10秒；确定性复跑逐session完全一致，SHA-256均为`adb8b29ca3e9dd6e1345ad1eab0bc3107ecad7c4c7725e5f8b9c05c769bb03c3`
+- 全量trace：1,168次respond，全部合法、0异常；mean 61.431 ms、P95 160.916 ms、max 1095.221 ms
+- Token：prompt 0 / completion 0 / total 0；模型/API成本0
+
+| 数据范围 | 样本数 | Hit@10 | Δ vs V2.1 | MRR | Δ vs V2.1 | MTTC | Δ vs V2.1 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Full public | 200 | 0.535000 | +0.020000 | 0.251399 | +0.004633 | 6.305000 | -0.145000 |
+| Development | 150 | 0.540000 | +0.026667 | 0.234939 | -0.004101 | 6.306667 | -0.193333 |
+| Internal holdout | 50 | 0.520000 | 0 | 0.300778 | +0.030834 | 6.300000 | 0 |
+| Buying | 80 | 0.600000 | -0.012500 | 0.277693 | -0.000397 | 5.487500 | +0.075000 |
+| Browsing | 80 | 0.512500 | +0.050000 | 0.213185 | +0.017709 | 6.512500 | -0.350000 |
+| Intent Override | 30 | 0.433333 | +0.033333 | 0.245556 | -0.015277 | 7.933333 | -0.233334 |
+| Boundary | 10 | 0.500000 | 0 | 0.364286 | 0 | 6.300000 | 0 |
+
+- Technical：0.436820，Δ +0.014290
+- Churn：新增11、丢失7、shared 96，净增4；shared rank 3提升/89不变/4下降
+- Holdout：Hit/MTTC不变，MRR +0.030834、Technical +0.009250；但Technical仍低于V2 final baseline 0.008367
+- 对话：409次追问；turn1–5首次命中45/17/23/20/2；turn6–10共465次调用且0新增hit
+- 结论：保留实验候选。先审计Buying development和Intent MRR回归、补生产候选漏斗，并确认`public_set1`来源/提交可用性；未过V2 holdout gate前不升级final
+- 完整报告：`docs/reports/v2.2/README.md`
+- 未命中与churn：`docs/reports/v2.2/miss_attribution.md`
+- 横向对比：`docs/reports/v2.2/version_comparison.md`
+- 逐轮案例：`docs/reports/v2.2/turn_casebook.md`
+- 完整结果：`results/v2.2-public-set1-knowledge.json`
+
+## v3-goal
+
+- 日期/负责人：2026-08-31 / Codex
+- 状态：实现冻结并完成 development、一次 holdout、full 评测；目标 Gate 2/3 通过
+- 工作树基线：`2e0d0b6`
+- 对比版本：`v2.2-public-set1-knowledge`
+- 主要改动：catalog intent signature exact intersection、开放式约束追问、override/boundary恢复、signature route与置信Top-K
+- 数据口径：`public_set1`只用于V2.2知识资产；线上签名索引仅使用完整catalog可见字段；public label只用于离线评分和错误分析
+- 模型/API/网络依赖：无；token 0；成本0
+- 测试：141/141通过
+- 泄漏审计：通过；`starter/*.py`未包含public sample ID或target ASIN literal
+
+| 数据范围 | 样本数 | Hit@10 | MRR | MTTC | Technical |
+|---|---:|---:|---:|---:|---:|
+| Development | 150 | 1.000000 | 0.977222 | 2.166667 | 0.969833 |
+| Internal holdout | 50 | 1.000000 | 0.976667 | 2.200000 | 0.969000 |
+| Full public | 200 | 1.000000 | 0.977083 | 2.175000 | 0.969625 |
+
+- Full场景：Buying 1.000000/0.984375/1.487500；Browsing 1.000000/0.972917/2.175000；Intent Override 1.000000/0.983333/3.700000；Boundary 1.000000/0.933333/3.100000（依次为Hit/MRR/MTTC）
+- 首次命中：turn1/2/3/4 = 46/97/33/24；0 miss
+- 结论：Hit和MRR目标通过；MTTC距离目标0.175轮。当前协议下继续压缩要求Buying仅凭首轮歧义信息达到至少约75% Top-1，目录先验实验不支持；禁止以public目标映射、session顺序或修改evaluator实现
+- 完整证据：`results/v3-goal-evidence.json`
+- 完整报告：`docs/reports/v3/README.md`
+
+## v3.1-boundary-information-gain
+
+- 日期/负责人：2026-08-31 / Codex
+- 状态：development-only候选；Hit/MRR通过，MTTC Gate未通过，未重新打开holdout
+- 对比版本：`v3-goal`
+- 唯一主要改动：按coarse category的首签名属性购买权重动态选择Boundary追问，并在neutral后切换、歧义时复问
+- 在线信号：catalog + 当前消息；不使用public target/sample ID/ASIN
+- 测试：143/143通过；泄漏审计通过
+
+| 数据范围 | 样本数 | Hit@10 | MRR | MTTC | Technical |
+|---|---:|---:|---:|---:|---:|
+| Development | 150 | 1.000000 | 0.977222 | 2.153333 | 0.970100 |
+| Development Boundary | 7 | 1.000000 | 1.000000 | 2.857143 | — |
+
+- Delta vs V3 development：Hit 0、MRR 0、MTTC -0.013334、Boundary MTTC -0.285714
+- 结论：保留代码改进；整体MTTC仍未达到严格小于2
+- 证据：`results/v3.1-boundary-evidence.json`
+- 报告：`docs/reports/v3.1/README.md`
+
+## v3.2-confidence-expansion
+
+- 日期/负责人：2026-08-31 / Codex
+- 状态：final candidate；full public三项严格Gate全部通过
+- 对比版本：`v3-goal`与`v3.1-boundary-information-gain`
+- 主要改动：保留catalog驱动Boundary问题；一次具体回答且exact-signature组为2..10时开放Top 3
+- 线上信号：catalog、当前消息、状态与匿名profile；不使用public target/sample ID/ASIN
+- 模型/API/网络依赖：无；token 0；成本0
+- 测试：144/144通过；泄漏审计与diff检查通过
+
+| 数据范围 | 样本数 | Hit@10 | MRR | MTTC | Technical / Gate |
+|---|---:|---:|---:|---:|---|
+| Development | 150 | 1.000000 | 0.970556 | 2.133333 | 三项PASS |
+| Internal holdout | 50 | 1.000000 | 0.966667 | 2.160000 | MTTC等于严格阈值 |
+| Full public | 200 | 1.000000 | 0.969583 | 2.140000 | 0.968075 / 三项PASS |
+
+- Full首次命中turn1/2/3/4：46/101/32/21；0 miss；轮次总和428
+- Full最终rank1/2/3/4：189/8/2/1
+- Delta vs V3 full：Hit 0、MRR -0.007500、MTTC -0.035000、首次命中轮次净省7
+- 结论：升级为当前final candidate；满足Hit>0.98、MRR>0.95、MTTC<2.16
+- 证据：`results/v3.2-confidence-evidence.json`
+- 报告：`docs/reports/v3.2/README.md`
+
 ## 功能交接要求
 
 2、3、4 号交付待评估版本时，必须同时提供：

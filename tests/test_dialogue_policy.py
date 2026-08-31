@@ -29,9 +29,20 @@ class QuestionPolicyTest(unittest.TestCase):
 
         self.assertEqual(decision.ask_attribute, "category")
 
-    def test_uses_category_playbook_priority(self) -> None:
+    def test_asks_open_requirement_first_for_known_category(self) -> None:
         state = SessionState.create("session-a", {})
         add_value(state, "category", "Shoes")
+
+        decision = self.policy.decide(state)
+
+        self.assertEqual(decision.ask_attribute, "other")
+        self.assertIn("other requirement", decision.message)
+
+    def test_uses_category_playbook_after_open_requirement(self) -> None:
+        state = SessionState.create("session-a", {})
+        add_value(state, "category", "Shoes")
+        state.turn = 2
+        state.mark_asked("other")
 
         decision = self.policy.decide(state)
 

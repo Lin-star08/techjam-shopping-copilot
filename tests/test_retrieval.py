@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from starter.agent import Agent
+from starter.agent import Agent, signature_recommendation_limit
 from starter.constraints import (
     apply_hard_filters,
     extract_basic_hard_constraints,
@@ -22,10 +22,13 @@ from starter.retrieval import (
     ensure_valid_recommendations,
     explicit_requirement_terms,
     merge_candidates,
+    product_constraint_signature,
     requirement_terms_from_text,
     relaxed_query,
     route_limits_for_turn,
     state_to_dict,
+    signature_observations,
+    signature_attribute,
 )
 from starter.state import SessionState
 from tools.diagnose_retrieval import _target_candidate_info, _target_ranked_info, classify_failure
@@ -311,6 +314,63 @@ class RetrievalTest(unittest.TestCase):
         self.assertTrue(candidates)
         self.assertEqual(candidates[0]["route"], "current_message")
         self.assertIn("parent_asin", candidates[0])
+
+    def test_product_constraint_signature_uses_visible_fields_only(self) -> None:
+        signature = product_constraint_signature(CATALOG_ROWS[0])
+
+        self.assertEqual(signature[:2], ["leather", "color: brown"])
+        self.assertIn("comfortable", signature)
+
+    def test_signature_candidates_intersect_disclosed_requirements(self) -> None:
+        messages = [
+            "I'm looking for Shoes. A key requirement is: leather.",
+            "For that, what matters is: color: brown; comfortable.",
+        ]
+
+        candidates = self.retriever.retrieve_signature_candidates(messages, limit=10)
+
+        self.assertEqual([item["parent_asin"] for item in candidates], ["A"])
+        self.assertEqual(candidates[0]["route"], "signature_exact")
+
+    def test_signature_observations_ignore_no_preference(self) -> None:
+        observations = signature_observations([
+            "I don't have a preference for other; please use your judgment.",
+            "For that, what matters is: leather; 100% Leather.",
+        ])
+
+        self.assertEqual(observations, ["leather 100 leather"])
+
+    def test_signature_attribute_uses_visible_value_type(self) -> None:
+        self.assertEqual(signature_attribute("color: brown"), "color")
+        self.assertEqual(signature_attribute("100% leather"), "material")
+        self.assertEqual(signature_attribute("Rubber sole"), "feature")
+
+    def test_small_signature_group_expands_to_three_after_specific_reply(self) -> None:
+        self.assertEqual(
+            signature_recommendation_limit(
+                top_k=10,
+                candidate_count=6,
+                specific_reply_count=1,
+                boundary_declined_open_question=False,
+            ),
+            3,
+        )
+        self.assertEqual(
+            signature_recommendation_limit(
+                top_k=10,
+                candidate_count=11,
+                specific_reply_count=1,
+                boundary_declined_open_question=False,
+            ),
+            1,
+        )
+
+    def test_preferred_signature_attribute_is_category_weighted(self) -> None:
+        attribute = self.retriever.preferred_signature_attribute([
+            "I'm looking for Jewelry Necklaces, but I'm still exploring."
+        ])
+
+        self.assertEqual(attribute, "feature")
 
     def test_matched_terms_are_product_specific_not_shared_query_terms(self) -> None:
         candidates = self.retriever.retrieve_current_message(
@@ -1089,6 +1149,28 @@ class RetrievalTest(unittest.TestCase):
         for recommendation in response["recommendations"]:
             self.assertEqual(set(recommendation), {"parent_asin", "score"})
             self.assertIsInstance(recommendation["score"], float)
+
+    def test_agent_asks_open_requirement_when_category_parser_is_uncertain(self) -> None:
+        agent = Agent(self.catalog_path)
+        agent.reset("s1", {})
+
+        response = agent.respond("s1", "I'm looking for Hoop.", 1, 10)
+
+        self.assertEqual(response["ask_attribute"], "other")
+
+    def test_agent_keeps_ambiguous_signature_output_to_one_item(self) -> None:
+        agent = Agent(self.catalog_path)
+        agent.reset("s1", {})
+
+        response = agent.respond(
+            "s1",
+            "I'm looking for Shoes. A key requirement is: leather.",
+            1,
+            10,
+        )
+
+        self.assertEqual(len(response["recommendations"]), 1)
+        self.assertEqual(response["ask_attribute"], "other")
 
     def test_final_recommendations_still_hide_internal_evidence(self) -> None:
         agent = Agent(self.catalog_path)

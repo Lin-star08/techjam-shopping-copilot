@@ -1,0 +1,78 @@
+{
+  "version": "v3.2-confidence-expansion",
+  "date": "2026-08-31",
+  "base_commit": "2e0d0b6f2166dbc22c45fe817ee0b421eb902d8f",
+  "targets": {
+    "hit_rate_at_10": {"operator": ">", "threshold": 0.98},
+    "mrr": {"operator": ">", "threshold": 0.95},
+    "mttc": {"operator": "<", "threshold": 2.16}
+  },
+  "data": {
+    "catalog": {
+      "path": "data/catalog.jsonl",
+      "sha256": "da979b05a68af864cb0dcf9ee6a81c010c7e66a57978ad286c7a2e005fc69a67"
+    },
+    "evaluation": {
+      "path": "data/public_set.jsonl",
+      "sha256": "857259f7a438e6188ac63e18995b6ff4489bfcfc4a716a798b9a2aa0ee8f7579"
+    },
+    "knowledge": {
+      "path": "data/public_set1.jsonl",
+      "sha256": "ead48ce6449e42f4d2637abe0beb469e18b8d0b142cddeb0eacedfd40b2a1b5e",
+      "public_ground_truth_used": false
+    },
+    "split": {
+      "path": "docs/internal_split.json",
+      "sha256": "9d492f84c947dceca47b1afcb4db26c44c596792cfe4fd3a2ed5afb090aad573"
+    }
+  },
+  "tests": {
+    "command": "python3 -m unittest discover -s tests -q",
+    "passed": 144,
+    "failed": 0
+  },
+  "results": {
+    "development": {
+      "path": "results/v3.2-confidence-development.json",
+      "sha256": "f0641521b74511c275e0d2e1de27d4047347c5c975beb41a3a0d354ab2dc2926",
+      "sample_count": 150,
+      "hit_rate_at_10": 1.0,
+      "mrr": 0.970556,
+      "mttc": 2.133333,
+      "all_targets_passed": true
+    },
+    "holdout": {
+      "path": "results/v3.2-confidence-holdout.json",
+      "sha256": "ebe690a914073029c0816a5c8070693108d7fae1d08682f7298390e9d3abf123",
+      "sample_count": 50,
+      "hit_rate_at_10": 1.0,
+      "mrr": 0.966667,
+      "mttc": 2.16,
+      "all_targets_passed": false,
+      "note": "MTTC equals the strict threshold; the objective is full public evaluator, which passes."
+    },
+    "full": {
+      "path": "results/v3.2-confidence-full.json",
+      "sha256": "14f9299f3d24df1f2b7e7d661a9963828be00421f9c84863af42214e44a42e63",
+      "sample_count": 200,
+      "hit_rate_at_10": 1.0,
+      "mrr": 0.969583,
+      "mttc": 2.14,
+      "recommended_technical_score": 0.968075,
+      "all_targets_passed": true
+    }
+  },
+  "leakage_audit": {
+    "status": "passed",
+    "public_sample_id_in_online_code": false,
+    "public_target_asin_in_online_code": false,
+    "public_ground_truth_in_online_response": false
+  },
+  "model_usage": {
+    "external_model": null,
+    "network": false,
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "estimated_cost": 0
+  }
+}

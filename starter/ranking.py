@@ -9,6 +9,7 @@ from typing import Any
 RANKING_CONFIG_ENV = "RANKING_CONFIG_NAME"
 DEFAULT_NAMED_RANKING_CONFIG = "mild_evidence_light"
 RETRIEVAL_ROUTES = (
+    "signature_exact",
     "current_message",
     "current_state",
     "category",

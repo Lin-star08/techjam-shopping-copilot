@@ -390,10 +390,11 @@ def build(catalog_path: Path, top_categories: int) -> dict:
 
 
 def render_playbook(payload: dict) -> str:
+    source_path = str(payload.get("source", {}).get("path") or "the configured catalog")
     lines = [
         "# Category Question Playbook v2",
         "",
-        "This file is generated from `data/catalog.jsonl` by `artifacts/build_lexicon.py`.",
+        f"This file is generated from `{source_path}` by `artifacts/build_lexicon.py`.",
         "It does not use public ground truth. The machine-readable source of truth is",
         "`artifacts/lexicon.json`.",
         "",
@@ -448,7 +449,7 @@ def render_playbook(payload: dict) -> str:
         "",
         "## Evidence boundary",
         "",
-        "All counts, vocabulary, aliases, category families, and classification findings come from participant-visible fields in `data/catalog.jsonl`. Public ground truth, target ASINs, and session-specific answer rules were not used.",
+        f"All counts, vocabulary, aliases, category families, and classification findings come from participant-visible fields in `{source_path}`. Public ground truth, target ASINs, and session-specific answer rules were not used.",
     ])
     return "\n".join(lines)
 

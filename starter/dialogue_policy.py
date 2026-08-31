@@ -26,6 +26,7 @@ FALLBACK_QUESTIONS = {
     "budget": "What budget would you like to stay within?",
     "feature": "Which feature matters most to you?",
     "brand": "Do you have a preferred brand?",
+    "other": "What other requirement matters most, such as material, fit, or a must-have feature?",
 }
 FALLBACK_PRIORITY = (
     "use_case", "material", "style", "color", "size", "budget", "feature", "brand",
@@ -58,6 +59,13 @@ class QuestionPolicy:
         category = state.current_slots.get("category")
         if category is None and self._available(state, "category", known):
             return QuestionDecision("category", FALLBACK_QUESTIONS["category"])
+
+        # A broad first clarification lets the customer volunteer the strongest
+        # remaining requirement instead of forcing it into a guessed attribute.
+        # This is especially valuable for long-tail catalog fields that the
+        # fixed vocabulary cannot classify safely.
+        if state.turn == 1 and self._available(state, "other", known):
+            return QuestionDecision("other", FALLBACK_QUESTIONS["other"])
 
         non_category_known = len(known - {"category"})
         if non_category_known >= ENOUGH_NON_CATEGORY_SIGNALS:

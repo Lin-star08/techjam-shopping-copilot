@@ -1,0 +1,53 @@
+{
+  "version": "v3.1-boundary-information-gain",
+  "date": "2026-08-31",
+  "base_version": "v3-goal",
+  "primary_change": "catalog-weighted first-signature attribute selection for Boundary clarification",
+  "tests": {
+    "command": "python3 -m unittest discover -s tests -q",
+    "passed": 143,
+    "failed": 0
+  },
+  "development": {
+    "path": "results/v3.1-boundary-development.json",
+    "sample_count": 150,
+    "hit_rate_at_10": 1.0,
+    "mrr": 0.977222,
+    "mttc": 2.153333,
+    "recommended_technical_score": 0.9701,
+    "boundary_mttc": 2.857143
+  },
+  "delta_vs_v3_development": {
+    "hit_rate_at_10": 0.0,
+    "mrr": 0.0,
+    "mttc": -0.013334,
+    "recommended_technical_score": 0.000267,
+    "boundary_mttc": -0.285714
+  },
+  "buying_first_turn_audit": {
+    "development_samples": 60,
+    "catalog_popularity": {
+      "top_1": 36,
+      "top_10": 57,
+      "mrr": 0.719097
+    },
+    "five_fold_oof_linear_ranker": {
+      "identifier_features": false,
+      "online_model_enabled": false,
+      "top_1": 37,
+      "top_10": 57,
+      "mrr": 0.741483,
+      "fold_top_1": [5, 8, 7, 10, 7],
+      "fold_sizes": [8, 14, 13, 13, 12]
+    },
+    "conclusion": "OOF improvement is too small to satisfy the MTTC gate; weights were not shipped."
+  },
+  "targets": {
+    "hit_rate_at_10_gt_0_98": true,
+    "mrr_gt_0_95": true,
+    "mttc_lt_2": false,
+    "all_passed": false
+  },
+  "leakage_audit": "passed",
+  "holdout_opened_for_this_change": false
+}

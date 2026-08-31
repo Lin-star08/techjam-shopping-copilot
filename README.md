@@ -2,6 +2,110 @@
 
 Build an AI shopping agent that asks useful follow-up questions and recommends the customer's hidden target product within at most 10 turns.
 
+## Final Submission: V3.2
+
+Public repository: **https://github.com/Lin-star08/techjam-shopping-copilot**
+
+Submission document: [`docs/submission/TechJam_V3.2_Written_Project_Description.docx`](docs/submission/TechJam_V3.2_Written_Project_Description.docx)
+
+V3.2 is a deterministic, zero-API-cost conversational shopping agent. It combines session-state tracking, four-way intent recognition, catalog-driven clarification, conservative constraint handling, SQLite FTS5 recall, structured product-signature matching, evidence-aware reciprocal-rank fusion, and confidence-gated candidate expansion. The agent asks only questions that can change retrieval, carries confirmed constraints across turns, invalidates superseded preferences, and expands from Top 1 to Top 3 or Top 10 only when the accumulated evidence supports it.
+
+On the frozen 200-session public evaluator, the final implementation achieves:
+
+| Metric | Target | V3.2 result |
+|---|---:|---:|
+| Hit Rate@10 | > 0.98 | **1.000000** |
+| MRR | > 0.95 | **0.969583** |
+| MTTC | < 2.16 | **2.140000** |
+| TechnicalScore | — | **0.968075** |
+
+All 200 targets are found by turn 4. Rank 1/2/3/4 hit counts are `189/8/2/1`; first-hit turn 1/2/3/4 counts are `46/101/32/21`.
+
+## Solution Architecture
+
+1. **Session and constraint state** (`starter/state.py`, `starter/constraints.py`) records category, material, color, feature, budget, neutral answers, and overrides without exposing user identity.
+2. **Intent and dialogue policy** (`starter/intent.py`, `starter/dialogue_policy.py`) distinguishes Buying, Browsing, Intent Override, and Boundary sessions, then asks a catalog-supported, high-information clarification question.
+3. **Multi-route retrieval** (`starter/retrieval.py`) combines current-message, state, category, requirement, profile, and popularity routes through SQLite FTS5. A structured signature index provides exact intersections over normalized product attributes.
+4. **Evidence-aware ranking** (`starter/ranking.py`) fuses routes using reciprocal-rank fusion and stable popularity tie-breaking. It does not use public sample IDs, target ASINs, or evaluator internals.
+5. **Confidence gate** (`starter/agent.py`) emits Top 1 with weak evidence, up to Top 3 for a small exact-signature candidate group after one concrete answer, and Top 10 only after stronger evidence or a declined Boundary question.
+6. **Reproducible evaluation** (`tools/run_goal_workflow.py`) runs tests, a fixed development/holdout split, label-leakage checks, the unchanged evaluator, strict metric gates, and result provenance hashes.
+
+The progression from the weak starter to V3.2 was deliberate: state tracking improved consistency; RRF increased recall; intent-aware dialogue reduced wasted turns; evidence ranking improved early precision; `public_set1.jsonl` supplied catalog vocabulary and clarification rules; exact product signatures closed remaining recall gaps; and the final confidence gate reduced MTTC while preserving MRR.
+
+## Development Environment, APIs, and Libraries
+
+- **Tools:** VS Code, macOS Terminal, Git, and Python 3.11.1. The code supports Python 3.10 or later.
+- **APIs/models:** none at runtime. V3.2 makes no OpenAI, Google, hosted-model, or network API calls and reports zero prompt/completion tokens.
+- **Libraries/frameworks:** Python standard library only, including `sqlite3`/FTS5, `json`, `re`, `dataclasses`, `pathlib`, `collections`, `statistics`, `unittest`, and `argparse`. PyTorch, Transformers, scikit-learn, and pandas are not required.
+- **Datasets/assets:** the frozen 50,000-item Amazon Reviews 2023 `Clothing_Shoes_and_Jewelry` catalog; 200 labeled public dialogue sessions; `public_set1.jsonl` with 3,021 catalog-shaped product rows for vocabulary and product-knowledge development; and generated `lexicon.json` / `category_playbook.md` assets. See `DATA_ATTRIBUTION.md` for source and redistribution notes.
+
+## Setup and Installation
+
+1. Clone the public repository and enter it:
+
+   ```bash
+   git clone https://github.com/Lin-star08/techjam-shopping-copilot.git
+   cd techjam-shopping-copilot
+   ```
+
+2. Use Python 3.10+; no third-party package installation is required.
+
+3. Download `catalog.jsonl.gz` from the repository release, verify it against `SHA256SUMS`, and unpack it:
+
+   ```bash
+   gzip -dk catalog.jsonl.gz
+   mv catalog.jsonl data/catalog.jsonl
+   ```
+
+4. Confirm that `data/public_set.jsonl` is present, then run the test suite:
+
+   ```bash
+   python3 -m unittest discover -s tests -q
+   ```
+
+## Reproduce the V3.2 Results
+
+Run the frozen workflow for the development split, full public set, and internal holdout:
+
+```bash
+python3 -m tools.run_goal_workflow \
+  --split development \
+  --output results/v3.2-confidence-development.json
+
+python3 -m tools.run_goal_workflow \
+  --split full \
+  --open-holdout \
+  --output results/v3.2-confidence-full.json \
+  --skip-tests
+
+python3 -m tools.run_goal_workflow \
+  --split holdout \
+  --open-holdout \
+  --output results/v3.2-confidence-holdout.json \
+  --skip-tests
+```
+
+The detailed result narrative is in `docs/reports/v3.2/README.md`; metric provenance, data/result hashes, test counts, and audit status are in `results/v3.2-confidence-evidence.json`.
+
+## Limitations and Future Improvements
+
+- The signature route relies on the competition generator's catalog-metadata normalization and disclosure order; distribution shifts require fresh validation.
+- The 50-session internal holdout reaches MTTC `2.160000`, equal to rather than below the strict target, so the full-set MTTC margin is modest.
+- Rule-based parsing is transparent and inexpensive but may be brittle for multilingual, misspelled, or highly implicit real-world requests.
+- Popularity is a stable tie-breaker rather than a personalized preference model; richer privacy-safe preference learning could improve ambiguous cases.
+- Given more time, we would add adversarial paraphrase tests, uncertainty calibration on unseen catalogs, multilingual normalization, latency/memory benchmarks, and a larger locked external holdout.
+
+## Team Contributions
+
+The contribution summary below is based on the repository's Git history; `TechJam2026` commits are upstream organizer changes rather than participant work.
+
+- **sjie-z:** session state, four-way intent recognition, clarification policy, and dialogue-agent integration.
+- **Li Cheng:** retrieval/search pipeline, recall improvements, evidence integration, and intent-flow integration.
+- **Lin-star08:** reciprocal-rank fusion, reranking ablations, evidence-aware reranking, and branch/PR integration.
+- **tangerineat1-cpu:** product-knowledge lexicon, category rules, and versioned knowledge artifacts.
+- **Beijing Yuhui Drone Service:** baseline/final evaluation artifacts, dataset/result integration, and reported evidence.
+- **linaka0517-create and yz4719:** search/evaluation branch integration and merge support recorded in Git history.
+
 ## What You Receive
 
 - A frozen catalog of 50,000 products from the `Clothing_Shoes_and_Jewelry` category of Amazon Reviews 2023.
