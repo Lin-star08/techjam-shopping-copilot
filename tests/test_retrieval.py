@@ -20,7 +20,9 @@ from starter.retrieval import (
     candidate_recall,
     category_queries_from_text,
     ensure_valid_recommendations,
+    explicit_requirement_terms,
     merge_candidates,
+    requirement_terms_from_text,
     relaxed_query,
     route_limits_for_turn,
     state_to_dict,
@@ -190,6 +192,66 @@ CATALOG_ROWS = [
         "store": "Example",
         "price": 36.0,
     },
+    {
+        "parent_asin": "Q",
+        "title": "Women's cotton bootcut jeans",
+        "features": ["soft denim"],
+        "details": {"color": "blue", "material": "cotton"},
+        "description": ["women jeans"],
+        "categories": ["Clothing, Shoes & Jewelry", "Women", "Clothing", "Jeans"],
+        "store": "Example",
+        "price": 42.0,
+    },
+    {
+        "parent_asin": "R",
+        "title": "Women's cycling jersey",
+        "features": ["breathable polyester cycling top"],
+        "details": {"color": "red", "material": "polyester"},
+        "description": ["cycling jerseys"],
+        "categories": ["Clothing, Shoes & Jewelry", "Sport Specific Clothing", "Cycling", "Women", "Jerseys"],
+        "store": "Example",
+        "price": 31.0,
+    },
+    {
+        "parent_asin": "S",
+        "title": "Multicolor unisex bandana",
+        "features": ["lightweight accessory"],
+        "details": {"color": "blue", "material": "cotton"},
+        "description": ["bandanas"],
+        "categories": ["Clothing, Shoes & Jewelry", "Novelty & More", "Clothing", "Novelty", "Men", "Accessories", "Bandanas"],
+        "store": "Example",
+        "price": 9.0,
+    },
+    {
+        "parent_asin": "T",
+        "title": "Youth soccer cleat",
+        "features": ["athletic soccer shoe"],
+        "details": {"color": "black", "material": "rubber"},
+        "description": ["soccer cleats"],
+        "categories": ["Clothing, Shoes & Jewelry", "Boys", "Shoes", "Athletic", "Soccer"],
+        "store": "Example",
+        "price": 29.0,
+    },
+    {
+        "parent_asin": "U",
+        "title": "Men's casual button-down shirt",
+        "features": ["cotton poplin"],
+        "details": {"color": "green", "material": "cotton"},
+        "description": ["casual button-down shirts"],
+        "categories": ["Clothing, Shoes & Jewelry", "Men", "Clothing", "Shirts", "Casual Button-Down Shirts"],
+        "store": "Example",
+        "price": 33.0,
+    },
+    {
+        "parent_asin": "V",
+        "title": "Satin sleep lounge pajama set",
+        "features": ["hand wash only"],
+        "details": {"color": "pink", "material": "polyester"},
+        "description": ["sleep lounge sets"],
+        "categories": ["Clothing, Shoes & Jewelry", "Women", "Clothing", "Lingerie, Sleep & Lounge", "Sleep & Lounge", "Sets"],
+        "store": "Example",
+        "price": 27.0,
+    },
 ]
 
 
@@ -250,12 +312,68 @@ class RetrievalTest(unittest.TestCase):
         self.assertEqual(candidates[0]["route"], "current_message")
         self.assertIn("parent_asin", candidates[0])
 
+    def test_matched_terms_are_product_specific_not_shared_query_terms(self) -> None:
+        candidates = self.retriever.retrieve_current_message(
+            "brown leather shoes black boots",
+            limit=10,
+        )
+        by_asin = {candidate["parent_asin"]: candidate for candidate in candidates}
+
+        self.assertIn("A", by_asin)
+        self.assertIn("B", by_asin)
+        self.assertIn("black", by_asin["A"]["query_terms"])
+        self.assertIn("brown", by_asin["B"]["query_terms"])
+        self.assertIn("brown", by_asin["A"]["matched_terms"])
+        self.assertNotIn("black", by_asin["A"]["matched_terms"])
+        self.assertIn("black", by_asin["B"]["matched_terms"])
+        self.assertNotIn("brown", by_asin["B"]["matched_terms"])
+
+    def test_query_terms_and_matched_terms_are_separate(self) -> None:
+        candidates = self.retriever.retrieve_current_message(
+            "brown leather shoes under 50",
+            limit=5,
+        )
+        first = candidates[0]
+
+        self.assertIn("under", first["query_terms"])
+        self.assertIn("50", first["query_terms"])
+        self.assertNotIn("under", first["matched_terms"])
+        self.assertNotIn("50", first["matched_terms"])
+        self.assertNotEqual(first["query_terms"], first["matched_terms"])
+
+    def test_explicit_match_count_uses_real_matched_attributes(self) -> None:
+        candidates = self.retriever.retrieve_current_message(
+            "brown leather shoes black boots",
+            limit=10,
+        )
+        target = next(candidate for candidate in candidates if candidate["parent_asin"] == "A")
+
+        self.assertEqual(target["matched_attributes"]["color"], ["brown"])
+        self.assertEqual(target["matched_attributes"]["material"], ["leather"])
+        self.assertIn("category", target["matched_attributes"])
+        self.assertEqual(target["explicit_match_count"], 3)
+        self.assertEqual(target["hard_match_count"], 3)
+        self.assertEqual(target["matched_attribute_count"], 3)
+
     def test_field_route_title_matches_product_name(self) -> None:
         candidates = self.retriever.retrieve_title("gold pendant necklace", limit=5)
 
         self.assertTrue(candidates)
         self.assertEqual(candidates[0]["route"], "title")
         self.assertEqual(candidates[0]["parent_asin"], "E")
+
+    def test_title_route_records_only_title_match(self) -> None:
+        candidates = self.retriever.retrieve_title("gold travel necklace", limit=10)
+        by_asin = {candidate["parent_asin"]: candidate for candidate in candidates}
+
+        self.assertIn("E", by_asin)
+        self.assertIn("gold", by_asin["E"]["matched_terms"])
+        self.assertIn("necklace", by_asin["E"]["matched_terms"])
+        self.assertNotIn("travel", by_asin["E"]["matched_terms"])
+        if "D" in by_asin:
+            self.assertIn("travel", by_asin["D"]["matched_terms"])
+            self.assertNotIn("gold", by_asin["D"]["matched_terms"])
+            self.assertNotIn("necklace", by_asin["D"]["matched_terms"])
 
     def test_retrieve_category_uses_message_category_without_state(self) -> None:
         candidates = self.retriever.retrieve_category({}, "I need shoes for walking", limit=5)
@@ -268,6 +386,20 @@ class RetrievalTest(unittest.TestCase):
         self.assertTrue(candidates)
         self.assertIn("jewelry", candidates[0]["matched_terms"])
         self.assertIn("necklaces", candidates[0]["matched_terms"])
+        self.assertEqual(
+            candidates[0]["matched_attributes"]["category"],
+            ["jewelry", "necklaces"],
+        )
+
+    def test_category_route_records_only_real_category_match(self) -> None:
+        candidates = self.retriever.retrieve_category({}, "jewelry necklaces", limit=10)
+        by_asin = {candidate["parent_asin"]: candidate for candidate in candidates}
+
+        self.assertIn("E", by_asin)
+        self.assertIn("necklaces", by_asin["E"]["matched_attributes"]["category"])
+        if "J" in by_asin:
+            self.assertIn("jewelry", by_asin["J"]["matched_terms"])
+            self.assertNotIn("necklaces", by_asin["J"]["matched_terms"])
 
     def test_category_alias_recognizes_bras_watches_belts_totes(self) -> None:
         self.assertEqual(category_queries_from_text("everyday bras"), ["everyday bras", "bras"])
@@ -297,6 +429,26 @@ class RetrievalTest(unittest.TestCase):
         ):
             self.assertIn(expected, matches)
         self.assertIn("J", {candidate["parent_asin"] for candidate in candidates})
+
+    def test_long_tail_categories_include_jerseys_bandanas_soccer(self) -> None:
+        matches = category_queries_from_text(
+            "Women Jerseys Accessories Bandanas Athletic Soccer"
+        )
+
+        self.assertIn("jerseys", matches)
+        self.assertIn("bandanas", matches)
+        self.assertIn("soccer", matches)
+        self.assertIn("R", {item["parent_asin"] for item in self.retriever.retrieve_category({}, "Women Jerseys", limit=5)})
+        self.assertIn("S", {item["parent_asin"] for item in self.retriever.retrieve_category({}, "Accessories Bandanas", limit=5)})
+        self.assertIn("T", {item["parent_asin"] for item in self.retriever.retrieve_category({}, "Athletic Soccer", limit=5)})
+
+    def test_category_query_keeps_leaf_phrase_not_only_parent_category(self) -> None:
+        matches = category_queries_from_text("Shirts Casual Button-Down Shirts")
+
+        self.assertIn("shirt", matches)
+        self.assertIn("casual button down shirts", matches)
+        self.assertIn("button down shirts", matches)
+        self.assertNotIn("t-shirts", matches)
 
     def test_boundary_category_aliases_return_candidates(self) -> None:
         candidates = self.retriever.retrieve_category({}, "hats and caps headbands", limit=5)
@@ -330,6 +482,40 @@ class RetrievalTest(unittest.TestCase):
         self.assertIn("necklaces", terms)
         self.assertIn("everyday bras", terms)
         self.assertIn("totes", terms)
+
+    def test_category_requirement_route_combines_category_and_material(self) -> None:
+        candidates = self.retriever.retrieve_category_requirement(
+            {},
+            "I'm looking for Women Jeans. A key requirement is: cotton.",
+            limit=10,
+        )
+
+        self.assertTrue(candidates)
+        self.assertEqual(candidates[0]["route"], "category_requirement")
+        self.assertIn("Q", {candidate["parent_asin"] for candidate in candidates})
+        target = next(candidate for candidate in candidates if candidate["parent_asin"] == "Q")
+        self.assertIn("jeans", target["matched_attributes"]["category"])
+        self.assertIn("cotton", target["matched_attributes"]["material"])
+
+    def test_key_requirement_route_drops_noise_words(self) -> None:
+        message = "I'm looking for Shirts Tanks Tops. A key requirement is: polyester."
+        query_terms = requirement_terms_from_text(message)
+        candidates = self.retriever.retrieve_requirement_fields({}, message, limit=10)
+
+        self.assertEqual(query_terms, ["polyester"])
+        self.assertIn("M", {candidate["parent_asin"] for candidate in candidates})
+        self.assertTrue(all("key" not in candidate["query_terms"] for candidate in candidates))
+        self.assertTrue(all("requirement" not in candidate["query_terms"] for candidate in candidates))
+
+    def test_hand_wash_requirement_route_extracts_phrase_terms(self) -> None:
+        message = "I'm looking for Sleep & Lounge Sets. Hand Wash Only"
+        query_terms = requirement_terms_from_text(message)
+        candidates = self.retriever.retrieve_requirement_fields({}, message, limit=10)
+
+        self.assertIn("hand", query_terms)
+        self.assertIn("wash", query_terms)
+        self.assertNotIn("only", query_terms)
+        self.assertIn("V", {candidate["parent_asin"] for candidate in candidates})
 
     def test_field_route_category_improves_browsing_candidates(self) -> None:
         candidates = self.retriever.retrieve_category_field(
@@ -525,6 +711,23 @@ class RetrievalTest(unittest.TestCase):
         self.assertIn("category", routes)
         self.assertIn("popular_category", routes)
 
+    def test_boundary_uses_same_category_popular_before_global_popular(self) -> None:
+        state = {"current_slots": {"category": "shoes"}, "neutral_attributes": ["color"]}
+
+        candidates = self.retriever.retrieve_route_candidates(
+            state,
+            {},
+            "I don't have a preference for color.",
+            [],
+            DialogueIntent.BOUNDARY,
+            fallback_candidates=self.retriever.fallback_candidates("", limit=5),
+            limit=30,
+        )
+        routes = [candidate["route"] for candidate in candidates]
+
+        self.assertIn("same_category_popular", routes)
+        self.assertLess(routes.index("same_category_popular"), routes.index("popular_category"))
+
     def test_neutral_attribute_does_not_return_from_profile(self) -> None:
         state = SessionState.create("s1", {"preference_tags": ["comfort", "durability"]})
         state.apply(
@@ -595,6 +798,24 @@ class RetrievalTest(unittest.TestCase):
         self.assertTrue(candidates)
         self.assertNotIn("black", candidates[0]["matched_terms"])
         self.assertIn("brown", candidates[0]["matched_terms"])
+
+    def test_invalidated_terms_do_not_enter_candidate_evidence(self) -> None:
+        state = {
+            "current_slots": {"category": "shoes", "color": "brown"},
+            "invalidated_slots": {"color": ["black"]},
+        }
+
+        candidates = self.retriever.retrieve_current_message(
+            "Actually not black, brown leather shoes.",
+            limit=10,
+            session_state=state,
+        )
+        by_asin = {candidate["parent_asin"]: candidate for candidate in candidates}
+
+        self.assertIn("A", by_asin)
+        self.assertIn("black", by_asin["A"]["query_terms"])
+        self.assertNotIn("black", by_asin["A"]["matched_terms"])
+        self.assertIn("brown", by_asin["A"]["matched_terms"])
 
     def test_merge_candidates_deduplicates_parent_asin(self) -> None:
         merged = merge_candidates(
@@ -717,6 +938,20 @@ class RetrievalTest(unittest.TestCase):
         self.assertEqual(constraints["category"], "earrings")
         self.assertEqual([item["parent_asin"] for item in filtered], ["A", "J"])
 
+    def test_v23_category_aliases_do_not_become_hard_filters(self) -> None:
+        candidates = [{"parent_asin": "A"}, {"parent_asin": "R"}, {"parent_asin": "S"}]
+        constraints = extract_basic_hard_constraints("jerseys bandanas soccer")
+
+        filtered = apply_hard_filters(
+            candidates,
+            constraints,
+            self.retriever.product_lookup,
+            min_results=1,
+        )
+
+        self.assertEqual(constraints["category"], "soccer")
+        self.assertEqual([item["parent_asin"] for item in filtered], ["A", "R", "S"])
+
     def test_constraints_keep_upstream_intent_helpers(self) -> None:
         self.assertTrue(has_no_preference_marker("I don't have a preference."))
         self.assertTrue(has_override_marker("Actually, make them brown."))
@@ -757,13 +992,22 @@ class RetrievalTest(unittest.TestCase):
         diagnostics = _target_candidate_info(
             [
                 {"parent_asin": "A", "route": "current_message"},
-                {"parent_asin": "B", "route": "category"},
+                {
+                    "parent_asin": "B",
+                    "route": "category",
+                    "matched_terms": ["shoes"],
+                    "matched_attributes": {"category": ["shoes"]},
+                    "explicit_match_count": 1,
+                    "hard_match_count": 1,
+                },
             ],
             "B",
         )
 
         self.assertEqual(diagnostics["target_candidate_rank"], 2)
         self.assertEqual(diagnostics["target_best_route"], "category")
+        self.assertEqual(diagnostics["target_matched_attributes"], {"category": ["shoes"]})
+        self.assertEqual(diagnostics["target_explicit_match_count"], 1)
 
     def test_diagnostics_classifies_recall_vs_rerank_failure(self) -> None:
         self.assertEqual(
@@ -845,6 +1089,41 @@ class RetrievalTest(unittest.TestCase):
         for recommendation in response["recommendations"]:
             self.assertEqual(set(recommendation), {"parent_asin", "score"})
             self.assertIsInstance(recommendation["score"], float)
+
+    def test_final_recommendations_still_hide_internal_evidence(self) -> None:
+        agent = Agent(self.catalog_path)
+        agent.reset("s1", {})
+        response = agent.respond("s1", "brown leather shoes under $50", 1, 10)
+        forbidden = {
+            "route",
+            "query_terms",
+            "matched_terms",
+            "matched_attributes",
+            "explicit_match_count",
+            "hard_match_count",
+            "matched_attribute_count",
+            "debug_reason",
+        }
+
+        for recommendation in response["recommendations"]:
+            self.assertFalse(forbidden & set(recommendation))
+
+    def test_final_recommendations_are_unique_per_turn(self) -> None:
+        agent = Agent(self.catalog_path)
+        agent.reset("s1", {})
+        response = agent.respond("s1", "brown leather shoes", 1, 10)
+        asins = [recommendation["parent_asin"] for recommendation in response["recommendations"]]
+
+        self.assertEqual(len(asins), len(set(asins)))
+
+    def test_same_product_can_reappear_across_turns_when_still_relevant(self) -> None:
+        agent = Agent(self.catalog_path)
+        agent.reset("s1", {})
+        first = agent.respond("s1", "brown leather shoes", 1, 5)
+        second = agent.respond("s1", "still looking for brown leather shoes", 2, 5)
+
+        self.assertIn("A", {item["parent_asin"] for item in first["recommendations"]})
+        self.assertIn("A", {item["parent_asin"] for item in second["recommendations"]})
 
     def test_agent_integrates_state_without_leaking_debug_fields(self) -> None:
         agent = Agent(self.catalog_path)

@@ -34,12 +34,20 @@ def _target_candidate_info(candidates: list[dict], target_parent_asin: str) -> d
                 "target_best_route": candidate.get("route"),
                 "target_route_hits": candidate.get("route_hits", 1),
                 "target_routes": [route.get("route") for route in candidate.get("routes", [])],
+                "target_matched_terms": candidate.get("matched_terms", []),
+                "target_matched_attributes": candidate.get("matched_attributes", {}),
+                "target_explicit_match_count": candidate.get("explicit_match_count", 0),
+                "target_hard_match_count": candidate.get("hard_match_count", 0),
             }
     return {
         "target_candidate_rank": None,
         "target_best_route": None,
         "target_route_hits": 0,
         "target_routes": [],
+        "target_matched_terms": [],
+        "target_matched_attributes": {},
+        "target_explicit_match_count": 0,
+        "target_hard_match_count": 0,
     }
 
 
@@ -207,6 +215,8 @@ def diagnose(catalog_path: str | Path, dataset_path: str | Path) -> dict:
             scenario_summary[scenario]["post_filter_recall_at_100"] += 1
         if best["filters"].get("target_filtered_out"):
             scenario_summary[scenario]["target_filtered_out"] += 1
+        if best["target_info"].get("target_explicit_match_count"):
+            scenario_summary[scenario]["target_with_explicit_evidence"] += 1
         scenario_summary[scenario][best["failure_type"]] += 1
         if best["ranked_info"].get("target_ranked_position") is not None:
             scenario_summary[scenario]["ranked_top_k_hit"] += 1
@@ -250,6 +260,7 @@ def diagnose(catalog_path: str | Path, dataset_path: str | Path) -> dict:
             "top_k_hit": counter["top_k_hit"],
             "ranked_top_k_hit": counter["ranked_top_k_hit"],
             "not_recalled": counter["not_recalled"],
+            "target_with_explicit_evidence": counter["target_with_explicit_evidence"],
         }
     missed_categories = {
         scenario: counter.most_common(12)
