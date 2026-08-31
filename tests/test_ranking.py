@@ -3,14 +3,27 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from math import isclose
+from os import environ
 from pathlib import Path
 from unittest.mock import patch
 
 from starter.agent import Agent
-from starter.ranking import aggregate_candidates, rerank_candidates
+from starter.ranking import (
+    RANKING_CONFIGS,
+    aggregate_candidates,
+    evidence_boost_breakdown,
+    ranking_config_from_environment,
+    ranking_score_breakdown,
+    reciprocal_rank_fusion_score,
+    rerank_candidates,
+)
 
 
 class RankingTest(unittest.TestCase):
+    def tearDown(self) -> None:
+        environ.pop("RANKING_CONFIG_NAME", None)
+
     def test_duplicate_asin_is_returned_once_with_both_routes(self) -> None:
         candidates = [
             {"parent_asin": "A", "route": "message", "route_rank": 2},
@@ -29,11 +42,17 @@ class RankingTest(unittest.TestCase):
             "route": "message",
             "route_rank": 3,
             "route_score": 12.5,
+            "query_terms": ["brown", "leather", "shoes"],
+            "matched_terms": ["brown", "leather"],
+            "matched_attributes": {"color": ["brown"], "material": ["leather"]},
             "debug_reason": "matched query",
         }
         evidence = aggregate_candidates([candidate])[0]["route_evidence"][0]
         self.assertEqual(evidence["route_rank"], 3)
         self.assertEqual(evidence["route_score"], 12.5)
+        self.assertEqual(evidence["query_terms"], ["brown", "leather", "shoes"])
+        self.assertEqual(evidence["matched_terms"], ["brown", "leather"])
+        self.assertEqual(evidence["matched_attributes"]["color"], ["brown"])
         self.assertEqual(evidence["debug_reason"], "matched query")
 
     def test_lower_route_rank_has_higher_rrf_score(self) -> None:
@@ -220,6 +239,148 @@ class RankingTest(unittest.TestCase):
             len({item["parent_asin"] for item in response["recommendations"]}),
         )
         self.assertTrue(all(set(item) == {"parent_asin", "score"} for item in response["recommendations"]))
+
+    def test_unset_config_uses_frozen_v2_and_equal_remains_available(self) -> None:
+        environ.pop("RANKING_CONFIG_NAME", None)
+        unset = ranking_config_from_environment()
+        environ["RANKING_CONFIG_NAME"] = "equal"
+        equal = ranking_config_from_environment()
+
+        self.assertEqual(unset, RANKING_CONFIGS["mild_evidence_light"])
+        self.assertNotEqual(unset, equal)
+        self.assertEqual(set(equal["route_weights"].values()), {1.0})
+        self.assertEqual(equal["rrf_k"], 60.0)
+
+    def test_unknown_named_config_fails_clearly(self) -> None:
+        environ["RANKING_CONFIG_NAME"] = "not-a-config"
+
+        with self.assertRaisesRegex(ValueError, "unknown RANKING_CONFIG_NAME"):
+            ranking_config_from_environment()
+
+    def test_current_message_weight_changes_expected_order(self) -> None:
+        candidates = [
+            {"parent_asin": "EXPLICIT", "route": "current_message", "route_rank": 1},
+            {"parent_asin": "MULTI", "route": "popular_category", "route_rank": 30},
+            {"parent_asin": "MULTI", "route": "fallback_catalog", "route_rank": 30},
+        ]
+
+        equal = rerank_candidates(candidates, config=RANKING_CONFIGS["equal"])
+        stronger = rerank_candidates(candidates, config=RANKING_CONFIGS["stronger"])
+
+        self.assertEqual(equal[0]["parent_asin"], "MULTI")
+        self.assertEqual(stronger[0]["parent_asin"], "EXPLICIT")
+
+    def test_unknown_route_uses_default_weight(self) -> None:
+        aggregated = aggregate_candidates([
+            {"parent_asin": "A", "route": "future_route", "route_rank": 2},
+        ])[0]
+        config = {"rrf_k": 60.0, "route_weights": {}, "default_route_weight": 0.5}
+
+        self.assertEqual(reciprocal_rank_fusion_score(aggregated, config), 0.5 / 62.0)
+
+    def test_score_breakdown_sums_to_production_score_without_changing_order(self) -> None:
+        candidates = [
+            {"parent_asin": "A", "route": "current_message", "route_rank": 2},
+            {"parent_asin": "A", "route": "current_message", "route_rank": 5},
+            {"parent_asin": "A", "route": "category", "route_rank": 3},
+            {"parent_asin": "B", "route": "current_state", "route_rank": 1},
+        ]
+        ranked_before = rerank_candidates(candidates, config=RANKING_CONFIGS["mild"])
+        breakdowns = [
+            ranking_score_breakdown(item, RANKING_CONFIGS["mild"])
+            for item in ranked_before
+        ]
+        ranked_after = rerank_candidates(candidates, config=RANKING_CONFIGS["mild"])
+
+        self.assertEqual(ranked_before, ranked_after)
+        for item, breakdown in zip(ranked_before, breakdowns):
+            self.assertTrue(isclose(item["final_score"], breakdown["final_score"]))
+            self.assertTrue(isclose(
+                breakdown["final_score"],
+                sum(part["contribution"] for part in breakdown["contributions"]),
+            ))
+        a_breakdown = next(item for item in breakdowns if item["parent_asin"] == "A")
+        self.assertEqual(
+            [part["route"] for part in a_breakdown["contributions"]],
+            ["category", "current_message"],
+        )
+
+    def test_evidence_boost_is_disabled_for_existing_configs(self) -> None:
+        candidate = aggregate_candidates([{
+            "parent_asin": "A",
+            "route": "current_message",
+            "route_rank": 1,
+            "matched_attributes": {"color": ["brown"], "feature": ["comfort"]},
+        }])[0]
+
+        breakdown = evidence_boost_breakdown(candidate, None, RANKING_CONFIGS["mild"])
+
+        self.assertEqual(breakdown["evidence_boost"], 0.0)
+        self.assertEqual(breakdown["evidence_multiplier"], 1.0)
+
+    def test_hard_evidence_receives_more_weight_than_soft_evidence(self) -> None:
+        hard = aggregate_candidates([{
+            "parent_asin": "HARD", "route": "current_message", "route_rank": 2,
+            "matched_attributes": {"material": ["leather"]},
+        }])[0]
+        soft = aggregate_candidates([{
+            "parent_asin": "SOFT", "route": "current_message", "route_rank": 2,
+            "matched_attributes": {"feature": ["comfort"]},
+        }])[0]
+        config = RANKING_CONFIGS["mild_evidence_light"]
+
+        self.assertGreater(
+            evidence_boost_breakdown(hard, None, config)["evidence_boost"],
+            evidence_boost_breakdown(soft, None, config)["evidence_boost"],
+        )
+
+    def test_evidence_boost_can_change_a_close_tie_without_deleting_candidates(self) -> None:
+        candidates = [
+            {"parent_asin": "MATCH", "route": "current_message", "route_rank": 2,
+             "matched_attributes": {"color": ["brown"], "material": ["leather"]}},
+            {"parent_asin": "NO_MATCH", "route": "current_message", "route_rank": 1},
+        ]
+
+        ranked = rerank_candidates(candidates, config=RANKING_CONFIGS["mild_evidence_medium"])
+
+        self.assertEqual([item["parent_asin"] for item in ranked], ["MATCH", "NO_MATCH"])
+        self.assertEqual(len(ranked), 2)
+
+    def test_neutral_and_invalidated_evidence_do_not_boost(self) -> None:
+        candidate = aggregate_candidates([{
+            "parent_asin": "A", "route": "current_state", "route_rank": 1,
+            "matched_attributes": {
+                "color": ["black", "brown"],
+                "material": ["leather"],
+                "feature": ["comfort"],
+            },
+        }])[0]
+        state = {
+            "neutral_attributes": ["material", "feature"],
+            "invalidated_slots": {"color": ["black"]},
+        }
+
+        breakdown = evidence_boost_breakdown(
+            candidate, state, RANKING_CONFIGS["mild_evidence_light"]
+        )
+
+        self.assertEqual(breakdown["hard_evidence_count"], 1)
+        self.assertEqual(breakdown["soft_evidence_count"], 0)
+
+    def test_evidence_breakdown_matches_production_final_score(self) -> None:
+        candidates = [{
+            "parent_asin": "A", "route": "current_message", "route_rank": 3,
+            "matched_attributes": {"category": ["shoes"], "feature": ["walking"]},
+        }]
+        config = RANKING_CONFIGS["mild_evidence_light"]
+        ranked = rerank_candidates(candidates, config=config)
+        breakdown = ranking_score_breakdown(ranked[0], config)
+
+        self.assertTrue(isclose(ranked[0]["final_score"], breakdown["final_score"]))
+        self.assertTrue(isclose(
+            breakdown["final_score"],
+            breakdown["rrf_score"] * breakdown["evidence_multiplier"],
+        ))
 
 
 if __name__ == "__main__":

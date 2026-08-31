@@ -3,9 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from starter.constraints import apply_hard_filters, extract_basic_hard_constraints, parse_constraints
-from starter.ranking import rerank_candidates
-from starter.retrieval import CatalogRetriever, ensure_valid_recommendations, is_generic_message
+from starter.ranking import ranking_config_from_environment, rerank_candidates
+from starter.retrieval import CatalogRetriever, ensure_valid_recommendations, merge_candidates
 from starter.state import SessionState
+from starter.dialogue_policy import QuestionPolicy
+from starter.intent import IntentResult, recognize_intent
 
 
 class Agent:
@@ -13,12 +15,16 @@ class Agent:
 
     def __init__(self, catalog_path: str | Path = "data/catalog.jsonl") -> None:
         self.retriever = CatalogRetriever(catalog_path)
+        self.ranking_config = ranking_config_from_environment()
         self._sessions: dict[str, SessionState] = {}
         self._profiles: dict[str, dict] = {}
+        self.question_policy = QuestionPolicy()
+        self._intent_history: dict[str, list[IntentResult]] = {}
 
     def reset(self, session_id: str, user_profile: dict) -> None:
         self._sessions[session_id] = SessionState.create(session_id, user_profile)
         self._profiles[session_id] = user_profile
+        self._intent_history[session_id] = []
 
     def respond(
         self,
@@ -35,39 +41,24 @@ class Agent:
             user_message,
             last_asked_attribute=session_state.last_asked_attribute,
         )
+        intent_result = recognize_intent(user_message, constraints)
+        self._intent_history[session_id].append(intent_result)
         session_state.apply(constraints, turn)
         user_profile = self._profiles.get(session_id, {})
         hard_constraints = session_state.hard_constraints or extract_basic_hard_constraints(user_message)
-        fallback = self.retriever.fallback_candidates(user_message, limit=max(50, top_k))
-        generic_message = is_generic_message(user_message)
-        if generic_message:
-            route_lists = [
-                self.retriever.retrieve_category(session_state, user_message, limit=50),
-                self.retriever.retrieve_current_message(user_message, limit=50),
-                self.retriever.retrieve_current_state(session_state, limit=50),
-                self.retriever.retrieve_attribute_profile(session_state, user_profile, limit=50),
-            ]
-            route_lists.extend([
-                self.retriever.retrieve_browsing_profile(session_state, user_profile, user_message, limit=25),
-                self.retriever.retrieve_popular_category(limit=25),
-            ])
-        else:
-            route_lists = [
-                self.retriever.retrieve_current_message(user_message, limit=50),
-                self.retriever.retrieve_current_state(session_state, limit=50),
-                self.retriever.retrieve_category(session_state, user_message, limit=50),
-                self.retriever.retrieve_attribute_profile(session_state, user_profile, limit=50),
-            ]
-        route_lists.append(fallback)
-        candidates = [candidate for route_candidates in route_lists for candidate in route_candidates]
-        unique_candidates: list[dict] = []
-        seen_asins: set[str] = set()
-        for candidate in candidates:
-            parent_asin = str(candidate.get("parent_asin") or "").strip()
-            if not parent_asin or parent_asin in seen_asins:
-                continue
-            seen_asins.add(parent_asin)
-            unique_candidates.append(candidate)
+        intent_name = getattr(intent_result.intent, "value", str(intent_result.intent))
+        fallback_query = "" if intent_name == "boundary" else user_message
+        fallback = self.retriever.fallback_candidates(fallback_query, limit=max(50, top_k))
+        candidates = self.retriever.retrieve_route_candidates(
+            session_state,
+            user_profile,
+            user_message,
+            constraints,
+            intent_result,
+            fallback_candidates=fallback,
+            limit=100,
+        )
+        unique_candidates = merge_candidates([candidates], limit=100)
         filtered_unique = apply_hard_filters(
             unique_candidates,
             hard_constraints,
@@ -83,7 +74,12 @@ class Agent:
             for candidate in candidates
             if str(candidate.get("parent_asin") or "").strip() in allowed_asins
         ]
-        ranked = rerank_candidates(filtered, session_state, top_k=top_k)
+        ranked = rerank_candidates(
+            filtered,
+            session_state,
+            top_k=top_k,
+            config=self.ranking_config,
+        )
         recommendations = ensure_valid_recommendations(
             [
                 {"parent_asin": candidate["parent_asin"], "score": candidate["final_score"]}
@@ -93,9 +89,13 @@ class Agent:
             fallback,
             top_k=top_k,
         )
+        decision = self.question_policy.decide(session_state)
+        if decision.ask_attribute is not None:
+            session_state.mark_asked(decision.ask_attribute)
+
         return {
-            "message": "Here are the closest matches I found.",
-            "ask_attribute": None,
+            "message": decision.message,
+            "ask_attribute": decision.ask_attribute,
             "recommendations": recommendations,
             "usage": {"prompt_tokens": 0, "completion_tokens": 0},
         }
