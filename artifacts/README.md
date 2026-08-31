@@ -60,8 +60,3 @@ Before delivery, confirm that:
 3. The change does not modify `evaluator/`, `data/public_set.jsonl`, `data/catalog.jsonl`, or the official evaluation configuration.
 4. No API keys, private data, public target ASINs, or session-specific lookup rules are included.
 5. Members 2, 3, and 4 are notified before any shared field or schema changes.
-
-
-## Impact of This README Update
-
-This update changes documentation only. It does not modify `lexicon.json` or any runtime code under `starter/`, so retrieval, ranking, clarification behavior, and evaluation results are unchanged.
