@@ -1,0 +1,20 @@
+{"case_id":"answer_001","last_asked_attribute":"feature","message":"For that, what matters is: Pull-On closure; Hand Wash Only.","expected_values":["Pull-On closure","Hand Wash Only"]}
+{"case_id":"answer_002","last_asked_attribute":"feature","message":"For that, what matters is: Imported; Rubber sole.","expected_values":["Imported","Rubber sole"]}
+{"case_id":"answer_003","last_asked_attribute":"feature","message":"For that, what matters is: 3 Year Battery; Day / Date Indicator.","expected_values":["3 Year Battery","Day / Date Indicator"]}
+{"case_id":"answer_004","last_asked_attribute":"feature","message":"For that, what matters is: Magnetic clasp; Engraved dial.","expected_values":["Magnetic clasp","Engraved dial"]}
+{"case_id":"answer_005","last_asked_attribute":"feature","message":"For that, what matters is: Adjustable buckle; Fold-flat design.","expected_values":["Adjustable buckle","Fold-flat design"]}
+{"case_id":"answer_006","last_asked_attribute":"feature","message":"For that, what matters is: Hidden zipper; Inner coin pocket.","expected_values":["Hidden zipper","Inner coin pocket"]}
+{"case_id":"answer_007","last_asked_attribute":"feature","message":"For that, what matters is: Snap fastening; Detachable strap.","expected_values":["Snap fastening","Detachable strap"]}
+{"case_id":"answer_008","last_asked_attribute":"feature","message":"For that, what matters is: Double stitched hem; Side slit.","expected_values":["Double stitched hem","Side slit"]}
+{"case_id":"answer_009","last_asked_attribute":"feature","message":"For that, what matters is: Padded divider; Cable opening.","expected_values":["Padded divider","Cable opening"]}
+{"case_id":"answer_010","last_asked_attribute":"feature","message":"For that, what matters is: Rotating bezel; Luminous dial.","expected_values":["Rotating bezel","Luminous dial"]}
+{"case_id":"answer_011","last_asked_attribute":"style","message":"Relaxed office look","expected_values":["Relaxed office look"]}
+{"case_id":"answer_012","last_asked_attribute":"style","message":"Minimal everyday silhouette","expected_values":["Minimal everyday silhouette"]}
+{"case_id":"answer_013","last_asked_attribute":"style","message":"Cropped modern fit","expected_values":["Cropped modern fit"]}
+{"case_id":"answer_014","last_asked_attribute":"use_case","message":"Museum visits","expected_values":["Museum visits"]}
+{"case_id":"answer_015","last_asked_attribute":"use_case","message":"Backyard gatherings","expected_values":["Backyard gatherings"]}
+{"case_id":"answer_016","last_asked_attribute":"use_case","message":"Conference networking","expected_values":["Conference networking"]}
+{"case_id":"answer_017","last_asked_attribute":"brand","message":"A small independent label","expected_values":["A small independent label"]}
+{"case_id":"answer_018","last_asked_attribute":"brand","message":"A heritage family maker","expected_values":["A heritage family maker"]}
+{"case_id":"answer_019","last_asked_attribute":"size","message":"Roomy enough for a tablet","expected_values":["Roomy enough for a tablet"]}
+{"case_id":"answer_020","last_asked_attribute":"size","message":"Compact enough for one pocket","expected_values":["Compact enough for one pocket"]}

@@ -1,0 +1,12 @@
+{"case_id":"cq_feature_01","expected_attribute":"feature","left":"waterproof","right":"lightweight"}
+{"case_id":"cq_feature_02","expected_attribute":"feature","left":"breathable","right":"pockets"}
+{"case_id":"cq_material_01","expected_attribute":"material","left":"cotton","right":"polyester"}
+{"case_id":"cq_material_02","expected_attribute":"material","left":"leather","right":"mesh"}
+{"case_id":"cq_color_01","expected_attribute":"color","left":"black","right":"blue"}
+{"case_id":"cq_color_02","expected_attribute":"color","left":"red","right":"green"}
+{"case_id":"cq_style_01","expected_attribute":"style","left":"casual","right":"formal"}
+{"case_id":"cq_style_02","expected_attribute":"style","left":"slim fit","right":"regular fit"}
+{"case_id":"cq_use_case_01","expected_attribute":"use_case","left":"running","right":"hiking"}
+{"case_id":"cq_use_case_02","expected_attribute":"use_case","left":"work","right":"travel"}
+{"case_id":"cq_budget_01","expected_attribute":"budget","left":20,"right":80}
+{"case_id":"cq_budget_02","expected_attribute":"budget","left":30,"right":100}

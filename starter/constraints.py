@@ -60,6 +60,19 @@ OVERRIDE_MARKER = re.compile(
     re.I,
 )
 SIZE_RE = re.compile(r"\bsize\s*[:#-]?\s*([a-z0-9.]+)\b", re.I)
+CONTEXTUAL_ANSWER_CUE = re.compile(
+    r"^\s*(?:for\s+(?:that|this)\s*,?\s*)?"
+    r"(?:what\s+matters\s+is|my\s+preference\s+is)"
+    r"\s*[:,-]?\s*",
+    re.I,
+)
+NON_ANSWER_MARKER = re.compile(
+    r"\b(?:those options|not quite right|ask me|still exploring|just browsing|"
+    r"show me|help me choose|another suggestion|not sure|(?:need|can't|cannot).*decide|"
+    r"no additional preference|no preference|"
+    r"use your judgment|you decide)\b",
+    re.I,
+)
 
 
 class Constraint(TypedDict):
@@ -212,11 +225,42 @@ def _brand_value(text: str, lexicon: dict) -> str | None:
     return min(matches)[2] if matches else None
 
 
+def _contextual_answer_values(
+    raw_text: str,
+    *,
+    allow_bare_answer: bool,
+) -> list[str]:
+    """Extract up to two safe soft values from an answer to a known question."""
+
+    text = str(raw_text).strip()
+    cue = CONTEXTUAL_ANSWER_CUE.match(text)
+    if cue:
+        text = text[cue.end():]
+    elif not allow_bare_answer:
+        return []
+    if not text or "?" in text or NON_ANSWER_MARKER.search(text):
+        return []
+    if not cue and (len(text) > 120 or len(text.split()) > 12):
+        return []
+
+    values: list[str] = []
+    for chunk in re.split(r"\s*;\s*", text):
+        value = re.sub(r"\s+", " ", chunk).strip(" \t\r\n,.;:-")
+        if not value or len(value) > 100 or NON_ANSWER_MARKER.search(value):
+            continue
+        if value.casefold() not in {item.casefold() for item in values}:
+            values.append(value)
+        if len(values) == 2:
+            break
+    return values
+
+
 def parse_constraints(
     user_message: str,
     *,
     last_asked_attribute: str | None = None,
     lexicon_path: str | Path = DEFAULT_LEXICON_PATH,
+    enable_contextual_fallback: bool = True,
 ) -> list[Constraint]:
     raw_text = str(user_message)
     text = raw_text.lower().strip()
@@ -260,6 +304,42 @@ def parse_constraints(
     brand = _brand_value(text, lexicon)
     if brand is not None and "brand" not in seen:
         constraints.append(_constraint("brand", brand, "override" if override else "hard", 0.9, raw_text))
+
+    has_neutral_constraint = any(
+        str(item.get("kind", "")) == "neutral"
+        for item in constraints
+    )
+    if (
+        enable_contextual_fallback
+        and not override
+        and not has_neutral_constraint
+        and last_asked_attribute in ALLOWED_ATTRIBUTES
+    ):
+        has_strong_context = bool(CONTEXTUAL_ANSWER_CUE.match(raw_text))
+        has_hard_other_answer = any(
+            str(item.get("kind", "")) in {"hard", "override"}
+            and str(item.get("attribute", "")) != last_asked_attribute
+            for item in constraints
+        )
+        contextual_values = _contextual_answer_values(
+            raw_text,
+            allow_bare_answer=not has_hard_other_answer,
+        )
+        if has_strong_context and contextual_values:
+            constraints = [
+                item for item in constraints
+                if str(item.get("attribute", "")) == last_asked_attribute
+            ]
+        existing_values = {
+            str(item.get("value", "")).casefold()
+            for item in constraints
+            if str(item.get("attribute", "")) == last_asked_attribute
+        }
+        constraints.extend(
+            _constraint(str(last_asked_attribute), value, "soft", 0.65, raw_text)
+            for value in contextual_values
+            if value.casefold() not in existing_values
+        )
 
     return constraints
 
