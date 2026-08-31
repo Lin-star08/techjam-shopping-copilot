@@ -11,17 +11,46 @@ RETRIEVAL_ROUTES = (
     "current_message",
     "current_state",
     "category",
+    "title",
+    "field_category",
+    "field_attribute",
+    "category_requirement",
+    "field_requirement",
+    "same_category_popular",
+    "field_brand",
+    "relaxed",
     "attribute_profile",
     "browsing_profile",
     "popular_category",
     "fallback_bm25",
     "fallback_catalog",
 )
+HARD_EVIDENCE_ATTRIBUTES = {"category", "color", "material", "brand"}
+EXPLICIT_EVIDENCE_ATTRIBUTES = HARD_EVIDENCE_ATTRIBUTES | {"use_case", "feature"}
 DEFAULT_RANKING_CONFIG: dict[str, Any] = {
     "rrf_k": 60.0,
     "route_weights": {},
     "default_route_weight": 1.0,
 }
+
+
+def _evidence_counts(matched_attributes: Mapping[str, list[str]] | None) -> dict[str, int]:
+    attributes = matched_attributes or {}
+    explicit_terms = {
+        term
+        for attribute in EXPLICIT_EVIDENCE_ATTRIBUTES
+        for term in attributes.get(attribute, [])
+    }
+    hard_terms = {
+        term
+        for attribute in HARD_EVIDENCE_ATTRIBUTES
+        for term in attributes.get(attribute, [])
+    }
+    return {
+        "explicit_match_count": len(explicit_terms),
+        "hard_match_count": len(hard_terms),
+        "matched_attribute_count": sum(1 for values in attributes.values() if values),
+    }
 RANKING_CONFIGS: dict[str, dict[str, Any]] = {
     "equal": {
         "rrf_k": 60.0,
@@ -34,6 +63,9 @@ RANKING_CONFIGS: dict[str, dict[str, Any]] = {
             "current_message": 1.15,
             "current_state": 1.10,
             "category": 1.0,
+            "category_requirement": 1.05,
+            "field_requirement": 0.95,
+            "same_category_popular": 0.90,
             "attribute_profile": 0.95,
             "browsing_profile": 0.90,
             "popular_category": 0.80,
@@ -48,6 +80,9 @@ RANKING_CONFIGS: dict[str, dict[str, Any]] = {
             "current_message": 1.30,
             "current_state": 1.15,
             "category": 1.0,
+            "category_requirement": 1.10,
+            "field_requirement": 0.95,
+            "same_category_popular": 0.85,
             "attribute_profile": 0.90,
             "browsing_profile": 0.80,
             "popular_category": 0.65,
@@ -121,7 +156,10 @@ def aggregate_candidates(candidates: Iterable[Mapping[str, Any]] | None) -> list
             {
                 "parent_asin": parent_asin,
                 "route_evidence": [],
+                "query_terms": [],
                 "matched_terms": [],
+                "matched_attributes": {},
+                "soft_matched_terms": [],
                 "debug_reasons": [],
             },
         )
@@ -132,22 +170,63 @@ def aggregate_candidates(candidates: Iterable[Mapping[str, Any]] | None) -> list
             if isinstance(terms, (list, tuple))
             else []
         )
+        query_terms = candidate.get("query_terms")
+        clean_query_terms = (
+            [str(term) for term in query_terms if str(term)]
+            if isinstance(query_terms, (list, tuple))
+            else []
+        )
+        matched_attributes = candidate.get("matched_attributes")
+        clean_matched_attributes: dict[str, list[str]] = {}
+        if isinstance(matched_attributes, Mapping):
+            for attribute, values in matched_attributes.items():
+                if not isinstance(values, (list, tuple, set)):
+                    continue
+                clean_values = list(dict.fromkeys(str(value) for value in values if str(value)))
+                if clean_values:
+                    clean_matched_attributes[str(attribute)] = clean_values
+        soft_terms = candidate.get("soft_matched_terms")
+        clean_soft_terms = (
+            [str(term) for term in soft_terms if str(term)]
+            if isinstance(soft_terms, (list, tuple))
+            else []
+        )
         reason = candidate.get("debug_reason")
         evidence = {
             "route": route,
             "route_rank": _valid_route_rank(candidate.get("route_rank")),
             "route_score": candidate.get("route_score"),
+            "query_terms": list(dict.fromkeys(clean_query_terms)),
             "matched_terms": list(dict.fromkeys(clean_terms)),
         }
+        evidence.update(_evidence_counts(clean_matched_attributes))
+        if clean_matched_attributes:
+            evidence["matched_attributes"] = clean_matched_attributes
+        if clean_soft_terms:
+            evidence["soft_matched_terms"] = list(dict.fromkeys(clean_soft_terms))
         if reason not in (None, ""):
             evidence["debug_reason"] = str(reason)
         item["route_evidence"].append(evidence)
 
+        for term in clean_query_terms:
+            if term not in item["query_terms"]:
+                item["query_terms"].append(term)
         for term in clean_terms:
             if term not in item["matched_terms"]:
                 item["matched_terms"].append(term)
+        for term in clean_soft_terms:
+            if term not in item["soft_matched_terms"]:
+                item["soft_matched_terms"].append(term)
+        for attribute, values in clean_matched_attributes.items():
+            existing = item["matched_attributes"].setdefault(attribute, [])
+            for value in values:
+                if value not in existing:
+                    existing.append(value)
         if reason not in (None, "") and str(reason) not in item["debug_reasons"]:
             item["debug_reasons"].append(str(reason))
+
+    for item in aggregated.values():
+        item.update(_evidence_counts(item["matched_attributes"]))
 
     return list(aggregated.values())
 

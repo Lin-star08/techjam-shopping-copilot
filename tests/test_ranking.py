@@ -41,11 +41,17 @@ class RankingTest(unittest.TestCase):
             "route": "message",
             "route_rank": 3,
             "route_score": 12.5,
+            "query_terms": ["brown", "leather", "shoes"],
+            "matched_terms": ["brown", "leather"],
+            "matched_attributes": {"color": ["brown"], "material": ["leather"]},
             "debug_reason": "matched query",
         }
         evidence = aggregate_candidates([candidate])[0]["route_evidence"][0]
         self.assertEqual(evidence["route_rank"], 3)
         self.assertEqual(evidence["route_score"], 12.5)
+        self.assertEqual(evidence["query_terms"], ["brown", "leather", "shoes"])
+        self.assertEqual(evidence["matched_terms"], ["brown", "leather"])
+        self.assertEqual(evidence["matched_attributes"]["color"], ["brown"])
         self.assertEqual(evidence["debug_reason"], "matched query")
 
     def test_lower_route_rank_has_higher_rrf_score(self) -> None:
