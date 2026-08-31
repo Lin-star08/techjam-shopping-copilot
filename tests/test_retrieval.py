@@ -13,9 +13,12 @@ from starter.retrieval import (
     category_queries_from_text,
     ensure_valid_recommendations,
     merge_candidates,
+    relaxed_query,
+    route_limits_for_turn,
+    state_to_dict,
 )
 from starter.state import SessionState
-from tools.diagnose_retrieval import _target_candidate_info
+from tools.diagnose_retrieval import _target_candidate_info, classify_failure
 
 
 CATALOG_ROWS = [
@@ -99,6 +102,66 @@ CATALOG_ROWS = [
         "store": "Example",
         "price": 70.0,
     },
+    {
+        "parent_asin": "I",
+        "title": "Black lace nightgown",
+        "features": ["soft sleep lounge"],
+        "details": {"color": "black", "material": "lace"},
+        "description": ["nightgowns and sleepshirts"],
+        "categories": ["Clothing, Shoes & Jewelry", "Women", "Lingerie", "Sleep & Lounge", "Nightgowns & Sleepshirts"],
+        "store": "Example",
+        "price": 32.0,
+    },
+    {
+        "parent_asin": "J",
+        "title": "Gold drop dangle earrings",
+        "features": ["lightweight jewelry"],
+        "details": {"color": "gold", "material": "metal"},
+        "description": ["drop and dangle earrings"],
+        "categories": ["Clothing, Shoes & Jewelry", "Women", "Jewelry", "Earrings", "Drop & Dangle"],
+        "store": "Example",
+        "price": 18.0,
+    },
+    {
+        "parent_asin": "K",
+        "title": "Women's waterproof rain boots",
+        "features": ["rubber outdoor boot"],
+        "details": {"color": "green", "material": "rubber"},
+        "description": ["rain boots for wet weather"],
+        "categories": ["Clothing, Shoes & Jewelry", "Women", "Shoes", "Rain Boots"],
+        "store": "Example",
+        "price": 44.0,
+    },
+    {
+        "parent_asin": "L",
+        "title": "Men's slip on loafer",
+        "features": ["easy slip ons"],
+        "details": {"color": "brown", "material": "suede"},
+        "description": ["loafers and slip ons"],
+        "categories": ["Clothing, Shoes & Jewelry", "Men", "Shoes", "Loafers & Slip-Ons"],
+        "store": "Example",
+        "price": 61.0,
+    },
+    {
+        "parent_asin": "M",
+        "title": "Athletic tank top",
+        "features": ["breathable active shirt"],
+        "details": {"color": "blue", "material": "polyester"},
+        "description": ["tanks and tops"],
+        "categories": ["Clothing, Shoes & Jewelry", "Men", "Shirts", "Tanks Tops"],
+        "store": "Example",
+        "price": 22.0,
+    },
+    {
+        "parent_asin": "N",
+        "title": "Fleece hoodie sweatshirt",
+        "features": ["warm casual layer"],
+        "details": {"color": "gray", "material": "polyester"},
+        "description": ["fashion hoodies and sweatshirts"],
+        "categories": ["Clothing, Shoes & Jewelry", "Women", "Fashion Hoodies & Sweatshirts"],
+        "store": "Example",
+        "price": 39.0,
+    },
 ]
 
 
@@ -115,11 +178,56 @@ class RetrievalTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
+    def test_state_adapter_ignores_unknown_future_fields(self) -> None:
+        class FutureState:
+            current_slots = {"category": "shoes"}
+            hard_constraints = {}
+            soft_preferences = {}
+            asked_attributes = []
+            neutral_attributes = []
+            invalidated_slots = {}
+            profile_signals = []
+            future_field_from_state_v2 = {"anything": "ignored"}
+
+        adapted = state_to_dict(FutureState())
+        adapted_dict = state_to_dict({
+            "current_slots": {"category": "shoes"},
+            "future_field_from_state_v2": {"anything": "ignored"},
+        })
+
+        self.assertEqual(adapted["current_slots"], {"category": "shoes"})
+        self.assertNotIn("future_field_from_state_v2", adapted)
+        self.assertEqual(adapted_dict["current_slots"], {"category": "shoes"})
+        self.assertNotIn("future_field_from_state_v2", adapted_dict)
+
+    def test_missing_state_fields_do_not_crash_retrieval(self) -> None:
+        partial_state = {"current_slots": {"category": "shoes"}, "future_field": "ignored"}
+
+        current_state = self.retriever.retrieve_current_state(partial_state, limit=5)
+        all_routes = self.retriever.retrieve_all_routes(
+            partial_state,
+            {},
+            "I'm still exploring",
+            [],
+            fallback_candidates=[],
+            limit=10,
+        )
+
+        self.assertIsInstance(current_state, list)
+        self.assertIsInstance(all_routes, list)
+
     def test_current_message_retrieval_returns_candidates(self) -> None:
         candidates = self.retriever.retrieve_current_message("brown leather shoes", limit=5)
         self.assertTrue(candidates)
         self.assertEqual(candidates[0]["route"], "current_message")
         self.assertIn("parent_asin", candidates[0])
+
+    def test_field_route_title_matches_product_name(self) -> None:
+        candidates = self.retriever.retrieve_title("gold pendant necklace", limit=5)
+
+        self.assertTrue(candidates)
+        self.assertEqual(candidates[0]["route"], "title")
+        self.assertEqual(candidates[0]["parent_asin"], "E")
 
     def test_retrieve_category_uses_message_category_without_state(self) -> None:
         candidates = self.retriever.retrieve_category({}, "I need shoes for walking", limit=5)
@@ -138,6 +246,38 @@ class RetrievalTest(unittest.TestCase):
         self.assertEqual(category_queries_from_text("wrist watches"), ["wrist watches", "watches"])
         self.assertEqual(category_queries_from_text("leather belts and totes"), ["belts", "totes"])
 
+    def test_long_tail_category_aliases_are_recognized(self) -> None:
+        matches = category_queries_from_text(
+            "sleep & lounge nightgowns and sleepshirts drop & dangle earrings "
+            "rain boots loafers and slip ons tanks and tops"
+        )
+        candidates = self.retriever.retrieve_category({}, "drop & dangle earrings", limit=5)
+
+        for expected in (
+            "sleep lounge",
+            "nightgowns sleepshirts",
+            "drop dangle",
+            "earrings",
+            "rain boots",
+            "loafers slip ons",
+            "tanks tops",
+        ):
+            self.assertIn(expected, matches)
+        self.assertIn("J", {candidate["parent_asin"] for candidate in candidates})
+
+    def test_category_route_uses_context_to_order_candidates(self) -> None:
+        state = {
+            "current_slots": {
+                "category": "shoes",
+                "color": "green",
+                "material": "rubber",
+            }
+        }
+
+        candidates = self.retriever.retrieve_category(state, "green rubber shoes", limit=5)
+
+        self.assertEqual(candidates[0]["parent_asin"], "K")
+
     def test_popular_category_route_returns_candidates_without_category(self) -> None:
         candidates = self.retriever.retrieve_popular_category(limit=5)
 
@@ -150,6 +290,17 @@ class RetrievalTest(unittest.TestCase):
         self.assertIn("necklaces", terms)
         self.assertIn("everyday bras", terms)
         self.assertIn("totes", terms)
+
+    def test_field_route_category_improves_browsing_candidates(self) -> None:
+        candidates = self.retriever.retrieve_category_field(
+            {},
+            "I'm looking for Bras Everyday Bras, but I'm still exploring",
+            limit=5,
+        )
+
+        self.assertTrue(candidates)
+        self.assertEqual(candidates[0]["route"], "field_category")
+        self.assertIn("F", {candidate["parent_asin"] for candidate in candidates})
 
     def test_browsing_profile_route_uses_profile_when_message_is_generic(self) -> None:
         candidates = self.retriever.retrieve_browsing_profile(
@@ -182,6 +333,79 @@ class RetrievalTest(unittest.TestCase):
         self.assertTrue(candidates)
         self.assertIn("shoes", candidates[0]["matched_terms"])
         self.assertIn("comfort", candidates[0]["matched_terms"])
+
+    def test_relaxed_route_removes_uncertain_terms(self) -> None:
+        query = relaxed_query({}, "brown waterproof comfortable walking shoes under $50")
+
+        self.assertIn("brown", query)
+        self.assertIn("shoes", query)
+        self.assertIn("walking", query)
+        self.assertNotIn("comfortable", query)
+        self.assertNotIn("waterproof", query)
+        self.assertNotIn("under", query)
+        self.assertNotIn("50", query)
+
+    def test_relaxed_route_keeps_core_category_and_hard_terms(self) -> None:
+        state = {
+            "current_slots": {
+                "category": "shoes",
+                "color": "brown",
+                "material": "leather",
+            }
+        }
+
+        query = relaxed_query(state, "comfortable waterproof options")
+
+        self.assertIn("shoes", query)
+        self.assertIn("brown", query)
+        self.assertIn("leather", query)
+
+    def test_no_preference_does_not_enter_relaxed_query(self) -> None:
+        query = relaxed_query({}, "I don't have a preference; please use your judgment.")
+
+        self.assertEqual(query, "")
+
+    def test_relaxed_query_drops_no_preference_terms(self) -> None:
+        query = relaxed_query({}, "No preference on style, use your judgment.")
+
+        self.assertNotIn("no", query)
+        self.assertNotIn("preference", query)
+        self.assertNotIn("judgment", query)
+
+    def test_relaxed_query_drops_invalidated_old_value(self) -> None:
+        state = {
+            "current_slots": {"category": "shoes", "color": "brown"},
+            "invalidated_slots": {"color": ["black"]},
+        }
+
+        query = relaxed_query(state, "Actually not black, brown leather shoes.")
+
+        self.assertNotIn("black", query)
+        self.assertIn("brown", query)
+        self.assertIn("shoes", query)
+
+    def test_relaxed_query_keeps_current_override_value(self) -> None:
+        state = {
+            "current_slots": {"category": "shoes", "color": "brown"},
+            "invalidated_slots": {"color": ["black"]},
+        }
+
+        query = relaxed_query(state, "Actually make them brown now.")
+
+        self.assertIn("brown", query)
+        self.assertIn("shoes", query)
+
+    def test_dynamic_route_limits_expand_browsing(self) -> None:
+        limits = route_limits_for_turn("I'm looking for Women Dresses, but I'm still exploring")
+
+        self.assertGreater(limits["category"], limits["current_message"])
+        self.assertGreater(limits["popular_category"], 0)
+
+    def test_dynamic_route_limits_preserve_buying(self) -> None:
+        limits = route_limits_for_turn("brown leather shoes under $50")
+
+        self.assertGreaterEqual(limits["current_state"], limits["category"])
+        self.assertGreater(limits["title"], 0)
 
     def test_no_preference_is_not_used_as_search_term(self) -> None:
         candidates = self.retriever.retrieve_browsing_profile(
@@ -279,6 +503,18 @@ class RetrievalTest(unittest.TestCase):
         self.assertEqual(merged[0]["route"], "current_message")
         self.assertEqual(merged[0]["matched_terms"], ["brown", "shoes"])
 
+    def test_route_hits_preserve_multiple_routes_for_same_product(self) -> None:
+        merged = merge_candidates(
+            [
+                [{"parent_asin": "A", "route": "current_message", "route_rank": 1, "route_score": 1.0}],
+                [{"parent_asin": "A", "route": "category", "route_rank": 2, "route_score": 2.0}],
+            ],
+            limit=10,
+        )
+
+        self.assertEqual(merged[0]["route_hits"], 2)
+        self.assertEqual([route["route"] for route in merged[0]["routes"]], ["current_message", "category"])
+
     def test_hard_filter_budget_is_safe(self) -> None:
         candidates = [{"parent_asin": "A"}, {"parent_asin": "B"}]
         filtered = apply_hard_filters(
@@ -321,6 +557,20 @@ class RetrievalTest(unittest.TestCase):
         self.assertNotIn("comfortable", constraints.values())
         self.assertNotIn("casual", constraints.values())
         self.assertEqual(constraints["category"], "shoes")
+
+    def test_new_category_aliases_do_not_become_hard_filters(self) -> None:
+        candidates = [{"parent_asin": "A"}, {"parent_asin": "J"}]
+        constraints = extract_basic_hard_constraints("drop dangle earrings")
+
+        filtered = apply_hard_filters(
+            candidates,
+            constraints,
+            self.retriever.product_lookup,
+            min_results=1,
+        )
+
+        self.assertEqual(constraints["category"], "earrings")
+        self.assertEqual([item["parent_asin"] for item in filtered], ["A", "J"])
 
     def test_fallback_returns_valid_unique_recommendations(self) -> None:
         recs = ensure_valid_recommendations(
@@ -365,6 +615,28 @@ class RetrievalTest(unittest.TestCase):
 
         self.assertEqual(diagnostics["target_candidate_rank"], 2)
         self.assertEqual(diagnostics["target_best_route"], "category")
+
+    def test_diagnostics_classifies_recall_vs_rerank_failure(self) -> None:
+        self.assertEqual(
+            classify_failure({"target_position": None}, {"target_position": None}, {}),
+            "recall_failure",
+        )
+        self.assertEqual(
+            classify_failure({"target_position": 15}, {"target_position": 15}, {}),
+            "rerank_failure",
+        )
+        self.assertEqual(
+            classify_failure(
+                {"target_position": 5},
+                {"target_position": None},
+                {"target_filtered_out": True},
+            ),
+            "filter_failure",
+        )
+        self.assertEqual(
+            classify_failure({"target_position": 3}, {"target_position": 3}, {}, top_k=10),
+            "top_k_hit",
+        )
 
     def test_agent_response_contract(self) -> None:
         agent = Agent(self.catalog_path)

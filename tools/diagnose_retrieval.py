@@ -20,7 +20,7 @@ from evaluator.local_evaluator import (
 )
 from starter.agent import Agent
 from starter.constraints import apply_hard_filters, hard_filter_diagnostics, parse_constraints
-from starter.retrieval import candidate_recall, is_generic_message, merge_candidates
+from starter.retrieval import candidate_recall
 
 
 def _target_candidate_info(candidates: list[dict], target_parent_asin: str) -> dict:
@@ -30,11 +30,26 @@ def _target_candidate_info(candidates: list[dict], target_parent_asin: str) -> d
             return {
                 "target_candidate_rank": index,
                 "target_best_route": candidate.get("route"),
+                "target_route_hits": candidate.get("route_hits", 1),
+                "target_routes": [route.get("route") for route in candidate.get("routes", [])],
             }
     return {
         "target_candidate_rank": None,
         "target_best_route": None,
+        "target_route_hits": 0,
+        "target_routes": [],
     }
+
+
+def classify_failure(before: dict, after: dict, filters: dict, top_k: int = TOP_K) -> str:
+    if filters.get("target_filtered_out"):
+        return "filter_failure"
+    position = after.get("target_position") or before.get("target_position")
+    if position is None:
+        return "recall_failure"
+    if int(position) > top_k:
+        return "rerank_failure"
+    return "top_k_hit"
 
 
 def diagnose(catalog_path: str | Path, dataset_path: str | Path) -> dict:
@@ -70,26 +85,14 @@ def diagnose(catalog_path: str | Path, dataset_path: str | Path) -> dict:
             state.apply(constraints, turn)
             user_profile = agent._profiles.get(session_id, {})
             fallback = agent.retriever.fallback_candidates(user_message, limit=max(50, TOP_K))
-            if is_generic_message(user_message):
-                route_lists = [
-                    agent.retriever.retrieve_category(state, user_message, limit=50),
-                    agent.retriever.retrieve_current_message(user_message, limit=50),
-                    agent.retriever.retrieve_current_state(state, limit=50),
-                    agent.retriever.retrieve_attribute_profile(state, user_profile, limit=50),
-                ]
-                route_lists.extend([
-                    agent.retriever.retrieve_browsing_profile(state, user_profile, user_message, limit=25),
-                    agent.retriever.retrieve_popular_category(limit=25),
-                ])
-            else:
-                route_lists = [
-                    agent.retriever.retrieve_current_message(user_message, limit=50),
-                    agent.retriever.retrieve_current_state(state, limit=50),
-                    agent.retriever.retrieve_category(state, user_message, limit=50),
-                    agent.retriever.retrieve_attribute_profile(state, user_profile, limit=50),
-                ]
-            route_lists.append(fallback)
-            candidates = merge_candidates(route_lists, limit=100)
+            candidates = agent.retriever.retrieve_all_routes(
+                state,
+                user_profile,
+                user_message,
+                constraints,
+                fallback_candidates=fallback,
+                limit=100,
+            )
             filtered = apply_hard_filters(
                 candidates,
                 state.hard_constraints,
@@ -100,6 +103,7 @@ def diagnose(catalog_path: str | Path, dataset_path: str | Path) -> dict:
             after = candidate_recall(filtered, target, cutoffs=(50, 100))
             filters = hard_filter_diagnostics(candidates, filtered, target)
             target_info = _target_candidate_info(candidates, target)
+            failure_type = classify_failure(before, after, filters, TOP_K)
             if best is None or (
                 after["target_position"] is not None
                 and (
@@ -114,6 +118,7 @@ def diagnose(catalog_path: str | Path, dataset_path: str | Path) -> dict:
                     "after": after,
                     "filters": filters,
                     "target_info": target_info,
+                    "failure_type": failure_type,
                 }
             if override_applied and after["recall_at_50"]:
                 break
@@ -146,6 +151,7 @@ def diagnose(catalog_path: str | Path, dataset_path: str | Path) -> dict:
             scenario_summary[scenario]["post_filter_recall_at_100"] += 1
         if best["filters"].get("target_filtered_out"):
             scenario_summary[scenario]["target_filtered_out"] += 1
+        scenario_summary[scenario][best["failure_type"]] += 1
         if not best["after"]["recall_at_100"]:
             scenario_summary[scenario]["not_recalled"] += 1
             for category in product.get("categories") or []:
@@ -159,7 +165,10 @@ def diagnose(catalog_path: str | Path, dataset_path: str | Path) -> dict:
                     "best_message": best["message"],
                     "target_candidate_rank": best["target_info"]["target_candidate_rank"],
                     "target_best_route": best["target_info"]["target_best_route"],
+                    "target_route_hits": best["target_info"]["target_route_hits"],
+                    "target_routes": best["target_info"]["target_routes"],
                     "target_after_filter": best["after"]["target_position"] is not None,
+                    "failure_type": best["failure_type"],
                     "target_title": product.get("title"),
                     "target_categories": product.get("categories"),
                 })
@@ -175,6 +184,10 @@ def diagnose(catalog_path: str | Path, dataset_path: str | Path) -> dict:
             "post_filter_recall_at_50": round(counter["post_filter_recall_at_50"] / count, 6),
             "post_filter_recall_at_100": round(counter["post_filter_recall_at_100"] / count, 6),
             "target_filtered_out": counter["target_filtered_out"],
+            "recall_failure": counter["recall_failure"],
+            "rerank_failure": counter["rerank_failure"],
+            "filter_failure": counter["filter_failure"],
+            "top_k_hit": counter["top_k_hit"],
             "not_recalled": counter["not_recalled"],
         }
     missed_categories = {
