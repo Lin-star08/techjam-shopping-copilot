@@ -61,12 +61,6 @@ Before delivery, confirm that:
 4. No API keys, private data, public target ASINs, or session-specific lookup rules are included.
 5. Members 2, 3, and 4 are notified before any shared field or schema changes.
 
-## Other Files in This Directory
-
-- `experiments.md` is the experiment-log entry point. Under the team contract, Member 5 maintains it with input from the group.
-- `demo_script.md` is the presentation outline and is primarily owned by Member 5.
-
-These two files are not part of Member 1's formal delivery and should not be changed as part of a lexicon update without coordinating with their owner.
 
 ## Impact of This README Update
 
