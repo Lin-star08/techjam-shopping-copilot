@@ -6,7 +6,15 @@ import unittest
 from pathlib import Path
 
 from starter.agent import Agent
-from starter.constraints import apply_hard_filters, extract_basic_hard_constraints, hard_filter_diagnostics
+from starter.constraints import (
+    apply_hard_filters,
+    extract_basic_hard_constraints,
+    hard_filter_diagnostics,
+    has_no_preference_marker,
+    has_override_marker,
+)
+from starter.intent import DialogueIntent
+from starter.ranking import aggregate_candidates
 from starter.retrieval import (
     CatalogRetriever,
     candidate_recall,
@@ -18,7 +26,7 @@ from starter.retrieval import (
     state_to_dict,
 )
 from starter.state import SessionState
-from tools.diagnose_retrieval import _target_candidate_info, classify_failure
+from tools.diagnose_retrieval import _target_candidate_info, _target_ranked_info, classify_failure
 
 
 CATALOG_ROWS = [
@@ -162,6 +170,26 @@ CATALOG_ROWS = [
         "store": "Example",
         "price": 39.0,
     },
+    {
+        "parent_asin": "O",
+        "title": "Soft running headband",
+        "features": ["stretch hair accessory"],
+        "details": {"color": "pink", "material": "fabric"},
+        "description": ["hats caps and headbands"],
+        "categories": ["Clothing, Shoes & Jewelry", "Women", "Accessories", "Hats & Caps", "Headbands"],
+        "store": "Example",
+        "price": 14.0,
+    },
+    {
+        "parent_asin": "P",
+        "title": "Athletic sport sandal slide",
+        "features": ["sport sandals slides"],
+        "details": {"color": "black", "material": "rubber"},
+        "description": ["athletic shoes"],
+        "categories": ["Clothing, Shoes & Jewelry", "Men", "Shoes", "Athletic", "Sport Sandals & Slides"],
+        "store": "Example",
+        "price": 36.0,
+    },
 ]
 
 
@@ -249,7 +277,8 @@ class RetrievalTest(unittest.TestCase):
     def test_long_tail_category_aliases_are_recognized(self) -> None:
         matches = category_queries_from_text(
             "sleep & lounge nightgowns and sleepshirts drop & dangle earrings "
-            "rain boots loafers and slip ons tanks and tops"
+            "rain boots loafers and slip ons tanks and tops hats and caps "
+            "headbands athletic shoes sport sandals"
         )
         candidates = self.retriever.retrieve_category({}, "drop & dangle earrings", limit=5)
 
@@ -261,9 +290,20 @@ class RetrievalTest(unittest.TestCase):
             "rain boots",
             "loafers slip ons",
             "tanks tops",
+            "hats caps",
+            "headbands",
+            "athletic shoes",
+            "sport sandals",
         ):
             self.assertIn(expected, matches)
         self.assertIn("J", {candidate["parent_asin"] for candidate in candidates})
+
+    def test_boundary_category_aliases_return_candidates(self) -> None:
+        candidates = self.retriever.retrieve_category({}, "hats and caps headbands", limit=5)
+        sport_candidates = self.retriever.retrieve_category({}, "athletic sport sandals", limit=5)
+
+        self.assertIn("O", {candidate["parent_asin"] for candidate in candidates})
+        self.assertIn("P", {candidate["parent_asin"] for candidate in sport_candidates})
 
     def test_category_route_uses_context_to_order_candidates(self) -> None:
         state = {
@@ -384,6 +424,22 @@ class RetrievalTest(unittest.TestCase):
         self.assertIn("brown", query)
         self.assertIn("shoes", query)
 
+    def test_override_drops_invalidated_old_value_from_relaxed_query(self) -> None:
+        state = SessionState.create("s1", {})
+        state.apply(
+            [{"attribute": "color", "value": "black", "kind": "hard", "confidence": 0.95}],
+            turn=1,
+        )
+        state.apply(
+            [{"attribute": "color", "value": "brown", "kind": "override", "confidence": 0.95}],
+            turn=2,
+        )
+
+        query = relaxed_query(state, "Actually make them brown instead of black shoes.")
+
+        self.assertIn("brown", query)
+        self.assertNotIn("black", query)
+
     def test_relaxed_query_keeps_current_override_value(self) -> None:
         state = {
             "current_slots": {"category": "shoes", "color": "brown"},
@@ -400,6 +456,19 @@ class RetrievalTest(unittest.TestCase):
 
         self.assertGreater(limits["category"], limits["current_message"])
         self.assertGreater(limits["popular_category"], 0)
+
+    def test_retrieval_uses_intent_to_choose_route_limits(self) -> None:
+        browsing = route_limits_for_turn("brown shoes", intent_result=DialogueIntent.BROWSING)
+        boundary = route_limits_for_turn(
+            "I don't have a preference; use your judgment.",
+            intent_result=DialogueIntent.BOUNDARY,
+        )
+        override = route_limits_for_turn("brown shoes", intent_result=DialogueIntent.INTENT_OVERRIDE)
+
+        self.assertGreater(browsing["category"], browsing["current_message"])
+        self.assertEqual(boundary["current_message"], 0)
+        self.assertGreater(boundary["popular_category"], 0)
+        self.assertGreaterEqual(override["current_message"], override["category"])
 
     def test_dynamic_route_limits_preserve_buying(self) -> None:
         limits = route_limits_for_turn("brown leather shoes under $50")
@@ -419,6 +488,42 @@ class RetrievalTest(unittest.TestCase):
 
     def test_boundary_no_preference_does_not_pollute_retrieval(self) -> None:
         self.assertEqual(category_queries_from_text("I don't have a preference; please use your judgment."), [])
+
+    def test_boundary_does_not_search_no_preference_text(self) -> None:
+        state = {"current_slots": {"category": "shoes"}, "neutral_attributes": ["color"]}
+
+        candidates = self.retriever.retrieve_route_candidates(
+            state,
+            {},
+            "I don't have a preference; please use your judgment.",
+            [],
+            DialogueIntent.BOUNDARY,
+            fallback_candidates=self.retriever.fallback_candidates("", limit=5),
+            limit=20,
+        )
+
+        self.assertNotIn("current_message", {candidate["route"] for candidate in candidates})
+        self.assertFalse(
+            any("preference" in candidate.get("matched_terms", []) for candidate in candidates)
+        )
+
+    def test_boundary_uses_state_category_and_popular_fallback(self) -> None:
+        state = {"current_slots": {"category": "shoes"}, "neutral_attributes": ["color"]}
+
+        candidates = self.retriever.retrieve_route_candidates(
+            state,
+            {},
+            "I don't have a preference for color.",
+            [],
+            DialogueIntent.BOUNDARY,
+            fallback_candidates=self.retriever.fallback_candidates("", limit=5),
+            limit=20,
+        )
+        routes = [candidate["route"] for candidate in candidates]
+
+        self.assertIn("current_state", routes)
+        self.assertIn("category", routes)
+        self.assertIn("popular_category", routes)
 
     def test_neutral_attribute_does_not_return_from_profile(self) -> None:
         state = SessionState.create("s1", {"preference_tags": ["comfort", "durability"]})
@@ -515,6 +620,34 @@ class RetrievalTest(unittest.TestCase):
         self.assertEqual(merged[0]["route_hits"], 2)
         self.assertEqual([route["route"] for route in merged[0]["routes"]], ["current_message", "category"])
 
+    def test_raw_candidates_preserve_multiple_route_hits_for_rrf(self) -> None:
+        state = {
+            "current_slots": {
+                "category": "shoes",
+                "color": "brown",
+                "material": "leather",
+            }
+        }
+
+        raw_candidates = self.retriever.retrieve_route_candidates(
+            state,
+            {"preference_tags": ["comfort"], "summary": "walking shoes"},
+            "brown leather shoes",
+            [],
+            DialogueIntent.BUYING,
+            fallback_candidates=[],
+            limit=20,
+        )
+        aggregated = aggregate_candidates(raw_candidates)
+        evidence = {
+            item["parent_asin"]: {route["route"] for route in item["route_evidence"]}
+            for item in aggregated
+        }
+
+        self.assertIn("current_message", evidence["A"])
+        self.assertIn("current_state", evidence["A"])
+        self.assertIn("category", evidence["A"])
+
     def test_hard_filter_budget_is_safe(self) -> None:
         candidates = [{"parent_asin": "A"}, {"parent_asin": "B"}]
         filtered = apply_hard_filters(
@@ -534,6 +667,18 @@ class RetrievalTest(unittest.TestCase):
             min_results=1,
         )
         self.assertEqual([item["parent_asin"] for item in filtered], ["C"])
+
+    def test_hard_filter_keeps_target_when_fields_are_missing(self) -> None:
+        candidates = [{"parent_asin": "TARGET"}]
+
+        filtered = apply_hard_filters(
+            candidates,
+            {"color": "brown", "material": "leather"},
+            {"TARGET": {"parent_asin": "TARGET"}},
+            min_results=1,
+        )
+
+        self.assertEqual(filtered, candidates)
 
     def test_state_hard_constraints_drive_filtering(self) -> None:
         state = SessionState.create("s1", {})
@@ -571,6 +716,10 @@ class RetrievalTest(unittest.TestCase):
 
         self.assertEqual(constraints["category"], "earrings")
         self.assertEqual([item["parent_asin"] for item in filtered], ["A", "J"])
+
+    def test_constraints_keep_upstream_intent_helpers(self) -> None:
+        self.assertTrue(has_no_preference_marker("I don't have a preference."))
+        self.assertTrue(has_override_marker("Actually, make them brown."))
 
     def test_fallback_returns_valid_unique_recommendations(self) -> None:
         recs = ensure_valid_recommendations(
@@ -628,15 +777,64 @@ class RetrievalTest(unittest.TestCase):
         self.assertEqual(
             classify_failure(
                 {"target_position": 5},
+                {"target_position": 5},
+                {},
+                {"target_ranked_position": None},
+            ),
+            "rerank_failure",
+        )
+        self.assertEqual(
+            classify_failure(
+                {"target_position": 5},
                 {"target_position": None},
                 {"target_filtered_out": True},
             ),
             "filter_failure",
         )
         self.assertEqual(
-            classify_failure({"target_position": 3}, {"target_position": 3}, {}, top_k=10),
+            classify_failure(
+                {"target_position": 3},
+                {"target_position": 3},
+                {},
+                {"target_ranked_position": 3},
+                top_k=10,
+            ),
             "top_k_hit",
         )
+
+    def test_diagnostics_reports_recall_rerank_filter_failure(self) -> None:
+        self.assertEqual(
+            _target_ranked_info([{"parent_asin": "A", "final_score": 0.5}], "A"),
+            {"target_ranked_position": 1, "target_ranked_score": 0.5},
+        )
+        self.assertEqual(
+            classify_failure(
+                {"target_position": 3},
+                {"target_position": 3},
+                {},
+                {"target_ranked_position": 1},
+            ),
+            "top_k_hit",
+        )
+
+    def test_agent_keeps_upstream_intent_and_question_policy(self) -> None:
+        agent = Agent(self.catalog_path)
+        agent.reset("s1", {})
+
+        first = agent.respond("s1", "I'm looking for shoes, but I'm still exploring.", 1, 10)
+        second = agent.respond(
+            "s1",
+            "I don't have a preference for color; please use your judgment.",
+            2,
+            10,
+        )
+
+        self.assertEqual(
+            [item.intent for item in agent._intent_history["s1"]],
+            [DialogueIntent.BROWSING, DialogueIntent.BOUNDARY],
+        )
+        self.assertIsNotNone(first["ask_attribute"])
+        self.assertNotEqual(second["ask_attribute"], "color")
 
     def test_agent_response_contract(self) -> None:
         agent = Agent(self.catalog_path)

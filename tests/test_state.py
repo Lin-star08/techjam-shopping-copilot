@@ -22,8 +22,11 @@ def constraint(
 
 
 class SessionStateTest(unittest.TestCase):
-    def test_initial_state_matches_contract(self) -> None:
-        state = SessionState.create("session-a", {"preference_tags": ["comfort", "fit", "comfort"]})
+    def test_initial_state_matches_frozen_contract(self) -> None:
+        state = SessionState.create(
+            "session-a",
+            {"preference_tags": ["comfort", "fit", "comfort"]},
+        )
 
         self.assertEqual(set(state.to_dict()), {
             "session_id",
@@ -45,6 +48,8 @@ class SessionStateTest(unittest.TestCase):
 
         self.assertEqual(state.current_slots["color"], "brown")
         self.assertEqual(state.invalidated_slots["color"], ["black"])
+        self.assertNotIn("color", state.soft_preferences)
+        self.assertNotIn("color", state.hard_constraints)
 
     def test_no_preference_removes_active_value_and_blocks_reasking(self) -> None:
         state = SessionState.create("session-a", {})
@@ -54,20 +59,43 @@ class SessionStateTest(unittest.TestCase):
 
         self.assertNotIn("brand", state.current_slots)
         self.assertEqual(state.neutral_attributes, ["brand"])
+        self.assertEqual(state.invalidated_slots["brand"], ["Example"])
         self.assertFalse(state.is_askable("brand"))
 
-    def test_low_confidence_hard_value_is_only_soft(self) -> None:
+    def test_asked_attributes_are_unique(self) -> None:
+        state = SessionState.create("session-a", {})
+        state.mark_asked("color")
+        state.mark_asked("color")
+
+        self.assertEqual(state.asked_attributes, ["color"])
+
+    def test_low_confidence_hard_value_is_only_a_soft_preference(self) -> None:
         state = SessionState.create("session-a", {})
         state.apply([constraint("material", "leather", confidence=0.4)], turn=1)
 
         self.assertNotIn("material", state.current_slots)
         self.assertEqual(state.soft_preferences["material"], ["leather"])
 
-    def test_budget_is_stored_as_hard_constraint(self) -> None:
+    def test_unknown_constraint_does_not_change_active_state(self) -> None:
+        state = SessionState.create("session-a", {})
+        state.apply([constraint("other", "maybe", kind="unknown")], turn=1)
+
+        self.assertEqual(state.current_slots, {})
+        self.assertEqual(state.hard_constraints, {})
+        self.assertEqual(state.soft_preferences, {})
+
+    def test_budget_is_stored_as_a_safe_hard_constraint(self) -> None:
         state = SessionState.create("session-a", {})
         state.apply([constraint("budget", 50.0)], turn=1)
 
         self.assertEqual(state.hard_constraints, {"budget_max": 50.0})
+
+    def test_to_dict_returns_a_copy(self) -> None:
+        state = SessionState.create("session-a", {})
+        snapshot = state.to_dict()
+        snapshot["current_slots"]["color"] = "black"
+
+        self.assertEqual(state.current_slots, {})
 
 
 if __name__ == "__main__":

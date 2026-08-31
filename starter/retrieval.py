@@ -106,6 +106,12 @@ CATEGORY_ALIASES = {
     "tanks": "tanks tops",
     "active": "active",
     "athletic": "athletic",
+    "hat": "hats",
+    "hats": "hats",
+    "cap": "caps",
+    "caps": "caps",
+    "headband": "headbands",
+    "headbands": "headbands",
 }
 CATEGORY_PHRASES = {
     "t shirt": "t-shirts",
@@ -142,6 +148,9 @@ CATEGORY_PHRASES = {
     "sport sandals": "sport sandals",
     "sport sandals slides": "sport sandals slides",
     "sport sandals and slides": "sport sandals slides",
+    "athletic shoes": "athletic shoes",
+    "hats caps": "hats caps",
+    "hats and caps": "hats caps",
     "tanks tops": "tanks tops",
     "tanks and tops": "tanks tops",
 }
@@ -175,6 +184,7 @@ POPULAR_CATEGORY_SEEDS = (
     "bras", "totes", "tunics", "mules clogs", "pants",
     "lingerie", "sleep lounge", "earrings", "rompers", "jumpsuits",
     "hoodies", "sweatshirts", "rain boots", "loafers", "slides",
+    "hats caps", "headbands", "sport sandals", "athletic shoes",
 )
 GENERIC_CATEGORY_PARTS = {
     "clothing", "shoes jewelry", "clothing shoes jewelry", "women", "men",
@@ -390,14 +400,52 @@ def _has_override_constraint(parsed_constraints: Iterable[dict] | None) -> bool:
     )
 
 
+def _intent_name(intent_result: object = None) -> str:
+    if intent_result is None:
+        return ""
+    intent = getattr(intent_result, "intent", intent_result)
+    value = getattr(intent, "value", intent)
+    return str(value)
+
+
 def route_limits_for_turn(
     user_message: str,
     session_state: object = None,
     parsed_constraints: Iterable[dict] | None = None,
+    intent_result: object = None,
 ) -> dict[str, int]:
     state = state_to_dict(session_state)
     neutral = bool(state.get("neutral_attributes"))
-    generic = is_generic_message(user_message) or neutral
+    intent = _intent_name(intent_result)
+    generic = intent == "browsing" or is_generic_message(user_message) or neutral
+    if intent == "boundary":
+        return {
+            "current_state": 70,
+            "category": 70,
+            "field_category": 60,
+            "relaxed": 45,
+            "popular_category": 45,
+            "attribute_profile": 20,
+            "field_attribute": 15,
+            "current_message": 0,
+            "title": 0,
+            "browsing_profile": 0,
+            "field_brand": 0,
+        }
+    if intent == "intent_override" or _has_override_constraint(parsed_constraints):
+        return {
+            "current_message": 60,
+            "current_state": 60,
+            "title": 45,
+            "category": 35,
+            "field_category": 35,
+            "field_attribute": 25,
+            "attribute_profile": 15,
+            "relaxed": 35,
+            "browsing_profile": 0,
+            "popular_category": 0,
+            "field_brand": 20,
+        }
     if generic:
         return {
             "category": 70,
@@ -411,20 +459,6 @@ def route_limits_for_turn(
             "browsing_profile": 25,
             "popular_category": 35,
             "field_brand": 10,
-        }
-    if _has_override_constraint(parsed_constraints):
-        return {
-            "current_message": 60,
-            "current_state": 60,
-            "title": 45,
-            "category": 35,
-            "field_category": 35,
-            "field_attribute": 25,
-            "attribute_profile": 15,
-            "relaxed": 35,
-            "browsing_profile": 0,
-            "popular_category": 0,
-            "field_brand": 20,
         }
     return {
         "current_message": 50,
@@ -626,7 +660,7 @@ class CatalogRetriever:
                 continue
             ordered.append(term)
             seen.add(term)
-            if len(ordered) >= 30:
+            if len(ordered) >= 40:
                 break
         return ordered
 
@@ -825,25 +859,39 @@ class CatalogRetriever:
             return []
         return self._search(query, "relaxed", limit)
 
-    def retrieve_all_routes(
+    def _route_lists_for_turn(
         self,
         session_state: object,
         user_profile: dict | None,
         user_message: str,
         parsed_constraints: Iterable[dict] | None = None,
+        intent_result: object = None,
         *,
         fallback_candidates: Iterable[dict] = (),
-        limit: int = 100,
-    ) -> list[dict]:
-        limits = route_limits_for_turn(user_message, session_state, parsed_constraints)
-        generic = is_generic_message(user_message) or bool(state_to_dict(session_state).get("neutral_attributes"))
-        override = _has_override_constraint(parsed_constraints)
+    ) -> list[list[dict]]:
+        limits = route_limits_for_turn(user_message, session_state, parsed_constraints, intent_result)
+        state = state_to_dict(session_state)
+        intent = _intent_name(intent_result)
+        generic = intent == "browsing" or is_generic_message(user_message) or bool(state.get("neutral_attributes"))
+        override = intent == "intent_override" or _has_override_constraint(parsed_constraints)
 
         def maybe(candidates: list[dict], route_limit: int) -> list[dict]:
             return candidates if route_limit > 0 else []
 
+        if intent == "boundary":
+            return [
+                maybe(self.retrieve_current_state(session_state, limits["current_state"]), limits["current_state"]),
+                maybe(self.retrieve_category(session_state, user_message, limits["category"]), limits["category"]),
+                maybe(self.retrieve_category_field(session_state, user_message, limits["field_category"]), limits["field_category"]),
+                maybe(self.retrieve_relaxed(session_state, user_message, limits["relaxed"]), limits["relaxed"]),
+                maybe(self.retrieve_attribute_fields(session_state, user_profile, user_message, limits["field_attribute"]), limits["field_attribute"]),
+                maybe(self.retrieve_attribute_profile(session_state, user_profile, limits["attribute_profile"]), limits["attribute_profile"]),
+                maybe(self.retrieve_popular_category(limits["popular_category"]), limits["popular_category"]),
+                list(fallback_candidates),
+            ]
+
         if generic:
-            route_lists = [
+            return [
                 maybe(self.retrieve_category(session_state, user_message, limits["category"]), limits["category"]),
                 maybe(self.retrieve_category_field(session_state, user_message, limits["field_category"]), limits["field_category"]),
                 maybe(self.retrieve_current_state(session_state, limits["current_state"]), limits["current_state"]),
@@ -856,8 +904,9 @@ class CatalogRetriever:
                 maybe(self.retrieve_popular_category(limits["popular_category"]), limits["popular_category"]),
                 list(fallback_candidates),
             ]
-        elif override:
-            route_lists = [
+
+        if override:
+            return [
                 maybe(self.retrieve_current_message(user_message, limits["current_message"]), limits["current_message"]),
                 maybe(self.retrieve_current_state(session_state, limits["current_state"]), limits["current_state"]),
                 maybe(self.retrieve_title(user_message, limits["title"]), limits["title"]),
@@ -869,19 +918,67 @@ class CatalogRetriever:
                 maybe(self.retrieve_attribute_profile(session_state, user_profile, limits["attribute_profile"]), limits["attribute_profile"]),
                 list(fallback_candidates),
             ]
-        else:
-            route_lists = [
-                maybe(self.retrieve_current_message(user_message, limits["current_message"]), limits["current_message"]),
-                maybe(self.retrieve_current_state(session_state, limits["current_state"]), limits["current_state"]),
-                maybe(self.retrieve_title(user_message, limits["title"]), limits["title"]),
-                maybe(self.retrieve_category(session_state, user_message, limits["category"]), limits["category"]),
-                maybe(self.retrieve_category_field(session_state, user_message, limits["field_category"]), limits["field_category"]),
-                maybe(self.retrieve_attribute_fields(session_state, user_profile, user_message, limits["field_attribute"]), limits["field_attribute"]),
-                maybe(self.retrieve_attribute_profile(session_state, user_profile, limits["attribute_profile"]), limits["attribute_profile"]),
-                maybe(self.retrieve_relaxed(session_state, user_message, limits["relaxed"]), limits["relaxed"]),
-                maybe(self.retrieve_brand(session_state, user_message, limits["field_brand"]), limits["field_brand"]),
-                list(fallback_candidates),
-            ]
+
+        return [
+            maybe(self.retrieve_current_message(user_message, limits["current_message"]), limits["current_message"]),
+            maybe(self.retrieve_current_state(session_state, limits["current_state"]), limits["current_state"]),
+            maybe(self.retrieve_title(user_message, limits["title"]), limits["title"]),
+            maybe(self.retrieve_category(session_state, user_message, limits["category"]), limits["category"]),
+            maybe(self.retrieve_category_field(session_state, user_message, limits["field_category"]), limits["field_category"]),
+            maybe(self.retrieve_attribute_fields(session_state, user_profile, user_message, limits["field_attribute"]), limits["field_attribute"]),
+            maybe(self.retrieve_attribute_profile(session_state, user_profile, limits["attribute_profile"]), limits["attribute_profile"]),
+            maybe(self.retrieve_relaxed(session_state, user_message, limits["relaxed"]), limits["relaxed"]),
+            maybe(self.retrieve_brand(session_state, user_message, limits["field_brand"]), limits["field_brand"]),
+            list(fallback_candidates),
+        ]
+
+    def retrieve_route_candidates(
+        self,
+        session_state: object,
+        user_profile: dict | None,
+        user_message: str,
+        parsed_constraints: Iterable[dict] | None = None,
+        intent_result: object = None,
+        *,
+        fallback_candidates: Iterable[dict] = (),
+        limit: int = 100,
+    ) -> list[dict]:
+        route_lists = self._route_lists_for_turn(
+            session_state,
+            user_profile,
+            user_message,
+            parsed_constraints,
+            intent_result,
+            fallback_candidates=fallback_candidates,
+        )
+        merged = merge_candidates(route_lists, limit)
+        allowed_asins = {str(candidate.get("parent_asin") or "") for candidate in merged}
+        return [
+            candidate
+            for route_candidates in route_lists
+            for candidate in route_candidates
+            if str(candidate.get("parent_asin") or "") in allowed_asins
+        ]
+
+    def retrieve_all_routes(
+        self,
+        session_state: object,
+        user_profile: dict | None,
+        user_message: str,
+        parsed_constraints: Iterable[dict] | None = None,
+        intent_result: object = None,
+        *,
+        fallback_candidates: Iterable[dict] = (),
+        limit: int = 100,
+    ) -> list[dict]:
+        route_lists = self._route_lists_for_turn(
+            session_state,
+            user_profile,
+            user_message,
+            parsed_constraints,
+            intent_result,
+            fallback_candidates=fallback_candidates,
+        )
         return merge_candidates(route_lists, limit)
 
     def fallback_candidates(self, query: str, limit: int = 50) -> list[dict]:

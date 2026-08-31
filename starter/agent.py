@@ -3,8 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from starter.constraints import apply_hard_filters, extract_basic_hard_constraints, parse_constraints
-from starter.retrieval import CatalogRetriever, ensure_valid_recommendations
+from starter.ranking import ranking_config_from_environment, rerank_candidates
+from starter.retrieval import CatalogRetriever, ensure_valid_recommendations, merge_candidates
 from starter.state import SessionState
+from starter.dialogue_policy import QuestionPolicy
+from starter.intent import IntentResult, recognize_intent
 
 
 class Agent:
@@ -12,12 +15,16 @@ class Agent:
 
     def __init__(self, catalog_path: str | Path = "data/catalog.jsonl") -> None:
         self.retriever = CatalogRetriever(catalog_path)
+        self.ranking_config = ranking_config_from_environment()
         self._sessions: dict[str, SessionState] = {}
         self._profiles: dict[str, dict] = {}
+        self.question_policy = QuestionPolicy()
+        self._intent_history: dict[str, list[IntentResult]] = {}
 
     def reset(self, session_id: str, user_profile: dict) -> None:
         self._sessions[session_id] = SessionState.create(session_id, user_profile)
         self._profiles[session_id] = user_profile
+        self._intent_history[session_id] = []
 
     def respond(
         self,
@@ -34,33 +41,61 @@ class Agent:
             user_message,
             last_asked_attribute=session_state.last_asked_attribute,
         )
+        intent_result = recognize_intent(user_message, constraints)
+        self._intent_history[session_id].append(intent_result)
         session_state.apply(constraints, turn)
         user_profile = self._profiles.get(session_id, {})
         hard_constraints = session_state.hard_constraints or extract_basic_hard_constraints(user_message)
-        fallback = self.retriever.fallback_candidates(user_message, limit=max(50, top_k))
-        candidates = self.retriever.retrieve_all_routes(
+        intent_name = getattr(intent_result.intent, "value", str(intent_result.intent))
+        fallback_query = "" if intent_name == "boundary" else user_message
+        fallback = self.retriever.fallback_candidates(fallback_query, limit=max(50, top_k))
+        candidates = self.retriever.retrieve_route_candidates(
             session_state,
             user_profile,
             user_message,
             constraints,
+            intent_result,
             fallback_candidates=fallback,
             limit=100,
         )
-        filtered = apply_hard_filters(
-            candidates,
+        unique_candidates = merge_candidates([candidates], limit=100)
+        filtered_unique = apply_hard_filters(
+            unique_candidates,
             hard_constraints,
             self.retriever.product_lookup,
             min_results=top_k,
         )
-        recommendations = ensure_valid_recommendations(
+        allowed_asins = {
+            str(candidate.get("parent_asin") or "").strip()
+            for candidate in filtered_unique
+        }
+        filtered = [
+            candidate
+            for candidate in candidates
+            if str(candidate.get("parent_asin") or "").strip() in allowed_asins
+        ]
+        ranked = rerank_candidates(
             filtered,
+            session_state,
+            top_k=top_k,
+            config=self.ranking_config,
+        )
+        recommendations = ensure_valid_recommendations(
+            [
+                {"parent_asin": candidate["parent_asin"], "score": candidate["final_score"]}
+                for candidate in ranked
+            ],
             self.retriever.catalog_ids,
             fallback,
             top_k=top_k,
         )
+        decision = self.question_policy.decide(session_state)
+        if decision.ask_attribute is not None:
+            session_state.mark_asked(decision.ask_attribute)
+
         return {
-            "message": "Here are the closest matches I found.",
-            "ask_attribute": None,
+            "message": decision.message,
+            "ask_attribute": decision.ask_attribute,
             "recommendations": recommendations,
             "usage": {"prompt_tokens": 0, "completion_tokens": 0},
         }

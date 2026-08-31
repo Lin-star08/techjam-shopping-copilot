@@ -6,7 +6,7 @@ from starter.constraints import parse_constraints
 
 
 class ConstraintParserTest(unittest.TestCase):
-    def test_parses_explicit_values_and_budget(self) -> None:
+    def test_parses_explicit_catalog_values_and_budget(self) -> None:
         constraints = parse_constraints("I need black leather shoes under $50.")
         by_attribute = {item["attribute"]: item for item in constraints}
 
@@ -38,6 +38,7 @@ class ConstraintParserTest(unittest.TestCase):
 
         self.assertEqual(color["value"], "brown")
         self.assertEqual(color["kind"], "override")
+        self.assertEqual(color["raw_text"], "Actually, ignore the earlier color; make them brown.")
 
     def test_unknown_message_does_not_invent_a_constraint(self) -> None:
         self.assertEqual(parse_constraints("I'm still exploring."), [])

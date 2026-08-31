@@ -70,6 +70,16 @@ class Constraint(TypedDict):
     source: str
     raw_text: str
 
+def has_no_preference_marker(user_message: str) -> bool:
+    """Return whether the message explicitly declines to state a preference."""
+
+    return any(pattern.search(str(user_message)) for pattern in NEUTRAL_MARKERS)
+
+
+def has_override_marker(user_message: str) -> bool:
+    """Return whether the message explicitly changes or replaces prior intent."""
+
+    return bool(OVERRIDE_MARKER.search(str(user_message)))
 
 def _default_lexicon() -> dict:
     return {
