@@ -1,4 +1,4 @@
-# Category Question Playbook v2
+# Category Question Playbook v3
 
 This file is generated from `data/public_set1.jsonl` by `artifacts/build_lexicon.py`.
 It does not use public ground truth. The machine-readable source of truth is
@@ -36,7 +36,7 @@ It does not use public ground truth. The machine-readable source of truth is
 
 ## Question order table
 
-The percentages show how often the vocabulary found usable catalog evidence. Size coverage is conservative because numeric sizes are parsed separately by member 2.
+Each cell shows `coverage` and `info`. Coverage is how many products expose the attribute; info is the weighted normalized-entropy score (0-1) estimating how much the answer can split candidates. High coverage does not automatically mean high information value. Size coverage is conservative because numeric sizes are parsed separately by member 2.
 
 | Category | Products | Ask 1 | Ask 2 | Ask 3 | Ask 4 |
 | --- | ---: | --- | --- | --- | --- |
@@ -104,6 +104,13 @@ The percentages show how often the vocabulary found usable catalog evidence. Siz
 ## No-preference flow
 
 For every row: record the current attribute as `neutral`, move to the next column, and never ask the neutral attribute again. If all four are answered, neutral, already asked, or unable to narrow live candidates, use `ask_attribute = null`.
+
+## Team handoff
+
+- Member 2: consume `category_playbook[*].question_order`; skip asked/neutral/current slots and use the normalization `next_action` as the fallback reason.
+- Member 3: consume `evidence_audit.term_stats`, `safe_soft_aliases`, and unreliable-leaf policies. Do not label size/style terms as feature by default and do not hard-filter from aliases alone.
+- Member 4: treat `accurate` explicit matches as candidates for stronger evidence; cap/downweight `broad`, keep `ambiguous` route-dependent, and block `noise` until catalog evidence exists.
+- Member 5: rebuild with `python artifacts/build_lexicon.py`, run `python -m unittest discover -s tests -p test_lexicon.py -v`, and compare coverage/quality counts before accepting a change.
 
 ## Evidence boundary
 
