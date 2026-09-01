@@ -51,10 +51,10 @@ No third-party Python packages, model downloads, API keys, or network services a
 
 ### Installation
 
-Clone the `teamdev` branch and enter the repository:
+Clone the final `main` branch and enter the repository:
 
 ```bash
-git clone --branch teamdev --single-branch https://github.com/Lin-star08/techjam-shopping-copilot.git
+git clone --branch main --single-branch https://github.com/Lin-star08/techjam-shopping-copilot.git
 cd techjam-shopping-copilot
 ```
 
@@ -68,7 +68,7 @@ python3 -c "import sqlite3; db = sqlite3.connect(':memory:'); db.execute('CREATE
 
 The expected row counts are 50,000 for `data/catalog.jsonl` and 200 for `data/public_set.jsonl`.
 
-To run the currently available core tests while excluding the stale workflow test described under Limitations:
+Run the verified core test suite:
 
 ```bash
 python3 -m unittest -q \
@@ -120,6 +120,15 @@ This command currently runs 142 tests.
 
 4. Compare the reproduced metrics with the archived result in `results/v3.3-final.json`. Historical version outputs are also stored under `results/`.
 
+5. Record the exact submitted revision and result checksum so the evaluation can be audited after the final merge to `main`:
+
+   ```bash
+   git rev-parse HEAD
+   shasum -a 256 data/catalog.jsonl data/public_set.jsonl results/v3.3-final.json
+   ```
+
+   The archived result must be regenerated from the same frozen `main` revision that is submitted for judging.
+
 The evaluator uses exact `parent_asin` equality. A miss contributes turn 11 to MTTC, and the reported composite is:
 
 ```text
@@ -136,4 +145,11 @@ The final public-set result is strong, but it should not be treated as evidence 
 - **Rule-based language coverage:** Intent and constraint parsing rely on English regular expressions and a generated vocabulary. Misspellings, multilingual input, implicit preferences, and unseen synonyms are not comprehensively handled. We would improve normalization and evaluate a local semantic retrieval model while preserving deterministic fallbacks.
 - **In-memory indexing:** The complete catalog and multiple FTS5/signature indexes are rebuilt when an `Agent` is created. Startup time and peak memory are not reported. We would benchmark both and consider a persistent prebuilt index.
 - **Fixed ranking and confidence rules:** Route weights, evidence boosts, and Top-K thresholds are hand-configured. We would calibrate them on a locked development set and validate them on unseen sessions.
-- **Incomplete workflow test dependency:** `tests/test_experiment_workflow.py` imports `tools/run_goal_workflow.py`, but that module is not present in the current repository. Full unittest discovery therefore reports 142 passing tests plus one import error. We would restore the workflow module or remove and replace the stale test so the complete suite is self-consistent.
+
+## Team member contributions
+
+- **evelynn yu — Product knowledge and taxonomy:** built the catalog-derived lexicon, category normalization rules, generated knowledge artifacts, and clarification playbook.
+- **jie Zhao — Conversation intelligence:** implemented session-state tracking, constraint parsing, intent recognition, neutral and override handling, and the clarification policy.
+- **naka li — Retrieval:** implemented the SQLite FTS5 search pipeline, multi-route retrieval, candidate evidence, fallback retrieval, and exact catalog-signature indexes.
+- **JINGLIN WANG — Ranking and integration:** implemented candidate aggregation, weighted Reciprocal Rank Fusion, deterministic reranking, ranking ablations, and final branch integration.
+- **Yiyong Zhang — Evaluation and delivery:** ran versioned evaluations, analyzed failure cases, archived final results, checked reproducibility, and prepared submission documentation.
