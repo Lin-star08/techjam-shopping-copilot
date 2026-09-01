@@ -1,216 +1,139 @@
-# TechJam Conversational E-Commerce Search Challenge
+# Conversational E-Commerce Search
 
-Build an AI shopping agent that asks useful follow-up questions and recommends the customer's hidden target product within at most 10 turns.
+## Project overview
 
-## Final Submission: V3.2
+This project implements a deterministic conversational shopping agent for the TechJam Conversational E-Commerce Search Challenge. Given an anonymized preference profile and a customer message, the agent can ask one clarification question and return up to 10 ranked product `parent_asin` values on each turn. Evaluation uses exact ASIN matching over at most 10 turns.
 
-Public repository: **https://github.com/Lin-star08/techjam-shopping-copilot**
+The current V3.3 implementation does not call an LLM or any external API. It reports zero prompt and completion tokens and uses only the Python standard library.
 
-Submission document: [`docs/submission/TechJam_V3.2_Written_Project_Description.docx`](docs/submission/TechJam_V3.2_Written_Project_Description.docx)
+### How the solution works
 
-V3.2 is a deterministic, zero-API-cost conversational shopping agent. It combines session-state tracking, four-way intent recognition, catalog-driven clarification, conservative constraint handling, SQLite FTS5 recall, structured product-signature matching, evidence-aware reciprocal-rank fusion, and confidence-gated candidate expansion. The agent asks only questions that can change retrieval, carries confirmed constraints across turns, invalidates superseded preferences, and expands from Top 1 to Top 3 or Top 10 only when the accumulated evidence supports it.
+1. **State and constraints:** `starter/state.py` and `starter/constraints.py` retain confirmed category, material, color, size, brand, budget, feature, style, and use-case signals across turns. Neutral answers clear the affected preference, while overrides invalidate superseded values.
+2. **Intent and clarification:** `starter/intent.py` recognizes Buying, Browsing, Intent Override, and Boundary behavior from the current message. `starter/dialogue_policy.py` selects a non-repeated clarification question and asks at most three attributes.
+3. **Retrieval:** `starter/retrieval.py` builds in-memory SQLite FTS5 indexes over the 50,000-product catalog. It retrieves through message, state, title, category, attribute, requirement, profile, popularity, relaxed, and fallback routes.
+4. **Exact catalog signatures:** Product features and details are normalized into signature indexes. When the conversation exposes exact catalog-supported requirements, the agent intersects those observations to narrow the candidate set.
+5. **Filtering and ranking:** Hard constraints filter candidates before `starter/ranking.py` combines route ranks with weighted Reciprocal Rank Fusion and a bounded evidence boost.
+6. **Confidence-gated output:** `starter/agent.py` returns Top 1 under weak evidence, up to Top 3 for a small exact-signature group after one concrete answer, and up to Top 10 after stronger evidence or a declined Boundary question.
+7. **Evaluation:** `evaluator/local_evaluator.py` simulates the customer dialogue and reports Hit@10, MRR, MTTC, token usage, scenario metrics, and the recommended Technical score.
 
-On the frozen 200-session public evaluator, the final implementation achieves:
+### Data
 
-| Metric | Target | V3.2 result |
-|---|---:|---:|
-| Hit Rate@10 | > 0.98 | **1.000000** |
-| MRR | > 0.95 | **0.969583** |
-| MTTC | < 2.16 | **2.140000** |
-| TechnicalScore | — | **0.968075** |
+The repository contains:
 
-All 200 targets are found by turn 4. Rank 1/2/3/4 hit counts are `189/8/2/1`; first-hit turn 1/2/3/4 counts are `46/101/32/21`.
+- `data/catalog.jsonl`: 50,000 products from the Amazon Reviews 2023 `Clothing_Shoes_and_Jewelry` category.
+- `data/public_set.jsonl`: 200 labeled public sessions: 80 Buying, 80 Browsing, 30 Intent Override, and 10 Boundary.
+- `artifacts/lexicon.json` and `artifacts/category_playbook.md`: generated vocabulary and clarification assets used by the rule-based pipeline.
 
-## Solution Architecture
+See `DATA_ATTRIBUTION.md` for dataset attribution and permitted-use guidance.
 
-1. **Session and constraint state** (`starter/state.py`, `starter/constraints.py`) records category, material, color, feature, budget, neutral answers, and overrides without exposing user identity.
-2. **Intent and dialogue policy** (`starter/intent.py`, `starter/dialogue_policy.py`) distinguishes Buying, Browsing, Intent Override, and Boundary sessions, then asks a catalog-supported, high-information clarification question.
-3. **Multi-route retrieval** (`starter/retrieval.py`) combines current-message, state, category, requirement, profile, and popularity routes through SQLite FTS5. A structured signature index provides exact intersections over normalized product attributes.
-4. **Evidence-aware ranking** (`starter/ranking.py`) fuses routes using reciprocal-rank fusion and stable popularity tie-breaking. It does not use public sample IDs, target ASINs, or evaluator internals.
-5. **Confidence gate** (`starter/agent.py`) emits Top 1 with weak evidence, up to Top 3 for a small exact-signature candidate group after one concrete answer, and Top 10 only after stronger evidence or a declined Boundary question.
-6. **Reproducible evaluation** (`tools/run_goal_workflow.py`) runs tests, a fixed development/holdout split, label-leakage checks, the unchanged evaluator, strict metric gates, and result provenance hashes.
+### Result progression
 
-The progression from the weak starter to V3.2 was deliberate: state tracking improved consistency; RRF increased recall; intent-aware dialogue reduced wasted turns; evidence ranking improved early precision; `public_set1.jsonl` supplied catalog vocabulary and clarification rules; exact product signatures closed remaining recall gaps; and the final confidence gate reduced MTTC while preserving MRR.
+| Version | Main improvement | Hit@10 | MRR | MTTC | Technical score |
+|---|---|---:|---:|---:|---:|
+| V0 baseline | Initial retrieval baseline | 0.125000 | 0.068034 | 9.810000 | 0.106710 |
+| V1 state | Persistent session state and structured constraint tracking | 0.130000 | 0.068942 | 9.760000 | 0.110483 |
+| V1.1 RRF | Multi-route Reciprocal Rank Fusion and removal of premature candidate truncation | 0.190000 | 0.093456 | 9.180000 | 0.159437 |
+| V2 dialogue | Intent-aware clarification with neutral and override handling | 0.410000 | 0.219788 | 7.430000 | 0.342336 |
+| V2.1 evidence | Field-aware retrieval routes and evidence-aware ranking | 0.515000 | 0.246766 | 6.450000 | 0.422530 |
+| **V3.3 final** | Exact signature matching, catalog-driven clarification, and confidence-gated output | **1.000000** | **0.969583** | **2.140000** | **0.968075** |
 
-## Development Environment, APIs, and Libraries
+The archived V3.3 result is `results/v3.3-final.json`. It contains all 200 per-session records. All targets are found by turn 4: 46 on turn 1, 101 on turn 2, 32 on turn 3, and 21 on turn 4. The final target ranks are 189 at rank 1, eight at rank 2, two at rank 3, and one at rank 4.
 
-- **Tools:** VS Code, macOS Terminal, Git, and Python 3.11.1. The code supports Python 3.10 or later.
-- **APIs/models:** none at runtime. V3.2 makes no OpenAI, Google, hosted-model, or network API calls and reports zero prompt/completion tokens.
-- **Libraries/frameworks:** Python standard library only, including `sqlite3`/FTS5, `json`, `re`, `dataclasses`, `pathlib`, `collections`, `statistics`, `unittest`, and `argparse`. PyTorch, Transformers, scikit-learn, and pandas are not required.
-- **Datasets/assets:** the frozen 50,000-item Amazon Reviews 2023 `Clothing_Shoes_and_Jewelry` catalog; 200 labeled public dialogue sessions; `public_set1.jsonl` with 3,021 catalog-shaped product rows for vocabulary and product-knowledge development; and generated `lexicon.json` / `category_playbook.md` assets. See `DATA_ATTRIBUTION.md` for source and redistribution notes.
+## Setup and installation instructions
 
-## Setup and Installation
+### Requirements
 
-1. Clone the public repository and enter it:
+- Python 3.10 or later
+- A Python build with SQLite FTS5 enabled
+- Git
 
-   ```bash
-   git clone https://github.com/Lin-star08/techjam-shopping-copilot.git
-   cd techjam-shopping-copilot
-   ```
+No third-party Python packages, model downloads, API keys, or network services are required at runtime.
 
-2. Use Python 3.10+; no third-party package installation is required.
+### Installation
 
-3. Download `catalog.jsonl.gz` from the repository release, verify it against `SHA256SUMS`, and unpack it:
-
-   ```bash
-   gzip -dk catalog.jsonl.gz
-   mv catalog.jsonl data/catalog.jsonl
-   ```
-
-4. Confirm that `data/public_set.jsonl` is present, then run the test suite:
-
-   ```bash
-   python3 -m unittest discover -s tests -q
-   ```
-
-## Reproduce the V3.2 Results
-
-Run the frozen workflow for the development split, full public set, and internal holdout:
+Clone the `teamdev` branch and enter the repository:
 
 ```bash
-python3 -m tools.run_goal_workflow \
-  --split development \
-  --output results/v3.2-confidence-development.json
-
-python3 -m tools.run_goal_workflow \
-  --split full \
-  --open-holdout \
-  --output results/v3.2-confidence-full.json \
-  --skip-tests
-
-python3 -m tools.run_goal_workflow \
-  --split holdout \
-  --open-holdout \
-  --output results/v3.2-confidence-holdout.json \
-  --skip-tests
+git clone --branch teamdev --single-branch https://github.com/Lin-star08/techjam-shopping-copilot.git
+cd techjam-shopping-copilot
 ```
 
-The detailed result narrative is in `docs/reports/v3.2/README.md`; metric provenance, data/result hashes, test counts, and audit status are in `results/v3.2-confidence-evidence.json`.
-
-## Limitations and Future Improvements
-
-- The signature route relies on the competition generator's catalog-metadata normalization and disclosure order; distribution shifts require fresh validation.
-- The 50-session internal holdout reaches MTTC `2.160000`, equal to rather than below the strict target, so the full-set MTTC margin is modest.
-- Rule-based parsing is transparent and inexpensive but may be brittle for multilingual, misspelled, or highly implicit real-world requests.
-- Popularity is a stable tie-breaker rather than a personalized preference model; richer privacy-safe preference learning could improve ambiguous cases.
-- Given more time, we would add adversarial paraphrase tests, uncertainty calibration on unseen catalogs, multilingual normalization, latency/memory benchmarks, and a larger locked external holdout.
-
-## Team Contributions
-
-The contribution summary below is based on the repository's Git history; `TechJam2026` commits are upstream organizer changes rather than participant work.
-
-- **sjie-z:** session state, four-way intent recognition, clarification policy, and dialogue-agent integration.
-- **Li Cheng:** retrieval/search pipeline, recall improvements, evidence integration, and intent-flow integration.
-- **Lin-star08:** reciprocal-rank fusion, reranking ablations, evidence-aware reranking, and branch/PR integration.
-- **tangerineat1-cpu:** product-knowledge lexicon, category rules, and versioned knowledge artifacts.
-- **Beijing Yuhui Drone Service:** baseline/final evaluation artifacts, dataset/result integration, and reported evidence.
-- **linaka0517-create and yz4719:** search/evaluation branch integration and merge support recorded in Git history.
-
-## What You Receive
-
-- A frozen catalog of 50,000 products from the `Clothing_Shoes_and_Jewelry` category of Amazon Reviews 2023.
-- 200 labeled public sessions for local development.
-- A weak BM25 starter agent and deterministic local evaluator.
-- The Agent API contract and scoring rules.
-
-The organizer keeps 800 additional sessions private for final evaluation.
-
-## Task
-
-For each session, your agent receives an anonymized preference profile and a short customer message. Raw user IDs, review text, timestamps, and purchase history are never disclosed. On every turn the agent may:
-
-- ask a natural clarification question in `message` and identify one requested field in `ask_attribute`;
-- return a ranked list of up to 10 catalog `parent_asin` values;
-- do both in the same response.
-
-The session ends when the target product appears in the scored Top 10 or after turn 10. Sessions cover Buying, Browsing, Intent Override, and Boundary behavior.
-
-## Download the Catalog
-
-Download `catalog.jsonl.gz` from the GitHub Release attached to this repository, then run:
+Confirm the Python version, input files, and SQLite FTS5 support:
 
 ```bash
-gzip -dk catalog.jsonl.gz
-mv catalog.jsonl data/catalog.jsonl
+python3 --version
+wc -l data/catalog.jsonl data/public_set.jsonl
+python3 -c "import sqlite3; db = sqlite3.connect(':memory:'); db.execute('CREATE VIRTUAL TABLE check_fts USING fts5(text)'); print('SQLite FTS5 available')"
 ```
 
-Verify the downloaded file using the published `SHA256SUMS` file.
+The expected row counts are 50,000 for `data/catalog.jsonl` and 200 for `data/public_set.jsonl`.
 
-## Run the Starter
-
-Python 3.10 or later is recommended. The starter uses only the Python standard library.
+To run the currently available core tests while excluding the stale workflow test described under Limitations:
 
 ```bash
-python3 -m evaluator.local_evaluator
+python3 -m unittest -q \
+  tests.test_agent_state \
+  tests.test_constraints \
+  tests.test_debug_trace \
+  tests.test_dialogue_policy \
+  tests.test_evaluation_assets \
+  tests.test_evaluator \
+  tests.test_intent \
+  tests.test_lexicon \
+  tests.test_ranking \
+  tests.test_retrieval \
+  tests.test_state
 ```
 
-Edit `starter/agent.py` to implement your system. Do not edit the evaluator or public labels when reporting your local score.
-The command writes per-session results and aggregate metrics to `results.json`.
+This command currently runs 142 tests.
 
-The included weak BM25 starter scores Hit Rate@10 `0.125`, MRR `0.068034`, and
-MTTC `9.81` on the released public set. See `docs/baseline_results.json`.
+## Steps to reproduce your results
 
-## Agent Interface
+1. Start from the repository root with the tracked catalog and public set in `data/`.
+2. Clear any ranking override and run the local evaluator on all 200 public sessions:
 
-```python
-class Agent:
-    def reset(self, session_id: str, user_profile: dict) -> None:
-        ...
+   ```bash
+   env -u RANKING_CONFIG_NAME python3 -m evaluator.local_evaluator \
+     --catalog data/catalog.jsonl \
+     --dataset data/public_set.jsonl \
+     --output /tmp/v3.3-final.json
+   ```
 
-    def respond(self, session_id: str, user_message: str, turn: int, top_k: int) -> dict:
-        return {
-            "message": "Do you have a material preference?",
-            "ask_attribute": "material",
-            "recommendations": [
-                {"parent_asin": "B000..."},
-                {"parent_asin": "B001..."}
-            ],
-            "usage": {"prompt_tokens": 120, "completion_tokens": 30}
-        }
-```
+   The evaluator prints aggregate and scenario metrics to the terminal and writes the complete per-session result to `/tmp/v3.3-final.json`.
 
-`ask_attribute` is one of `category`, `material`, `color`, `size`, `style`, `brand`, `budget`, `feature`, `use_case`, `other`, or `null`. See `docs/agent_api_contract.json`.
+3. Verify the reproduced aggregate metrics:
 
-## Technical Metrics
+   ```bash
+   python3 -c "import json; r=json.load(open('/tmp/v3.3-final.json')); print({k:r[k] for k in ('sample_count','hit_rate_at_10','mrr','mttc','recommended_technical_score','reported_token_usage')})"
+   ```
 
-- **Hit Rate@10:** fraction of sessions that find the target within 10 turns.
-- **MRR:** mean reciprocal rank of the target; a miss contributes zero.
-- **MTTC:** mean first-hit turn; a miss is assigned turn 11.
-- **Reported token usage:** prompt and completion tokens returned by the team's model client.
+   Expected values:
+
+   ```text
+   sample_count: 200
+   hit_rate_at_10: 1.0
+   mrr: 0.969583
+   mttc: 2.14
+   recommended_technical_score: 0.968075
+   reported_token_usage: 0 prompt tokens, 0 completion tokens
+   ```
+
+4. Compare the reproduced metrics with the archived result in `results/v3.3-final.json`. Historical version outputs are also stored under `results/`.
+
+The evaluator uses exact `parent_asin` equality. A miss contributes turn 11 to MTTC, and the reported composite is:
 
 ```text
-TechnicalScore = 0.50 × HitRate@10 + 0.30 × MRR + 0.20 × Efficiency
 Efficiency = clip((11 - MTTC) / 10, 0, 1)
+Technical score = 0.50 × Hit@10 + 0.30 × MRR + 0.20 × Efficiency
 ```
 
-`TechnicalScore` is an objective input to the `Technical Execution` assessment. It is not a separate judging criterion and does not represent the entire `Technical Execution` score.
+## Limitations and future improvements
 
-Only exact `parent_asin` equality produces a hit. Core metrics are also reported by scenario.
+The final public-set result is strong, but it should not be treated as evidence of general performance beyond this dataset.
 
-## Model Choice and Cost
-
-Teams may use any legally accessible LLM API or local model. Teams manage their own credentials and must never commit API keys. Model choice, estimated cost, token usage, and latency must be disclosed. Token usage is a feasibility metric, not part of the core technical score. The organizer does not provide or reimburse model API credits; teams are responsible for any costs incurred through optional external services.
-
-## Files
-
-```text
-data/public_set.jsonl             200 labeled development sessions
-docs/competition_specification.md participant rules and evaluation protocol
-docs/agent_api_contract.json      machine-readable Agent contract
-docs/evaluation_config.json       scoring configuration
-docs/baseline_results.json        reproducible weak-starter reference score
-starter/agent.py                  editable weak starter
-evaluator/local_evaluator.py      public-set simulator and scorer
-```
-
-## Judging and Submission Policy
-
-- Participant submission requirements: `docs/submission_rules.md`
-- Organizer-only final judging controls: `organizer/JUDGING_RUNBOOK.md`
-- Organizer private release checklist: `organizer/private_release_checklist.md`
-- Judging day operations SOP: `organizer/JUDGING_DAY_SOP.md`
-
-## Data Source
-
-The catalog and sessions are derived from Amazon Reviews 2023 by McAuley Lab, UCSD. See `DATA_ATTRIBUTION.md` before using or redistributing the data.
-Sessions are sampled deterministically from the official Clothing 5-core leave-last-out split and joined to the frozen catalog.
+- **Public-set validation only:** V3.3 is reported on the 200 tracked public sessions. The repository does not contain a locked external or private holdout result for this version. Given more time, we would freeze a larger unseen evaluation set before making further ranking or dialogue changes.
+- **Simulator-sensitive exact matching:** The signature route recognizes a small set of disclosure phrases and intersects normalized catalog features. Different dialogue wording or product metadata may reduce its effectiveness. We would add paraphrase-heavy and out-of-distribution tests and make evidence extraction less dependent on fixed phrases.
+- **Rule-based language coverage:** Intent and constraint parsing rely on English regular expressions and a generated vocabulary. Misspellings, multilingual input, implicit preferences, and unseen synonyms are not comprehensively handled. We would improve normalization and evaluate a local semantic retrieval model while preserving deterministic fallbacks.
+- **In-memory indexing:** The complete catalog and multiple FTS5/signature indexes are rebuilt when an `Agent` is created. Startup time and peak memory are not reported. We would benchmark both and consider a persistent prebuilt index.
+- **Fixed ranking and confidence rules:** Route weights, evidence boosts, and Top-K thresholds are hand-configured. We would calibrate them on a locked development set and validate them on unseen sessions.
+- **Incomplete workflow test dependency:** `tests/test_experiment_workflow.py` imports `tools/run_goal_workflow.py`, but that module is not present in the current repository. Full unittest discovery therefore reports 142 passing tests plus one import error. We would restore the workflow module or remove and replace the stale test so the complete suite is self-consistent.
