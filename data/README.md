@@ -11,7 +11,3 @@ Each session contains a safe aggregate `user_profile` and public labels for loca
 Download `catalog.jsonl.gz` from the GitHub Release and decompress it as `catalog.jsonl` in this directory. Expected row count: 50,000.
 
 Never place API keys, private evaluation data, or participant outputs in this directory.
-
-## `public_set1.jsonl`
-
-Contains 3,021 unique product records used by the V2.2 product-knowledge ablation. It is a catalog-shaped knowledge source, not an evaluator session dataset: it has no `sample_id`, `scenario_type`, `user_profile`, or `ground_truth` fields. Its ASINs are all present in `catalog.jsonl` and do not overlap the 200 public target ASINs.
